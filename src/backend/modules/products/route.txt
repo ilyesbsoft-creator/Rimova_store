@@ -1,0 +1,23 @@
+3. ربط Controller بمسارات API
+هذه هي المسارات المقترحة لتوزيع الدوال على ملفات route.ts:
+المسار	HTTP	Controller
+/api/admin/products	GET	getProducts
+/api/admin/products	POST	createProduct
+/api/admin/products/[id]	GET	getProductDetails
+/api/admin/products/[id]	PATCH	updateProduct
+/api/admin/products/[id]	DELETE	deleteProduct
+/api/admin/products/[id]/images	POST	addProductImages
+/api/admin/products/[id]/images/[imageId]	PATCH	updateProductImage
+/api/admin/products/[id]/images/[imageId]	DELETE	removeProductImage
+/api/admin/products/[id]/images/[imageId]/primary	PATCH	makeProductImagePrimary
+/api/admin/products/[id]/variants	POST	createVariant
+/api/admin/products/[id]/variants/[variantId]	PATCH	updateVariant
+/api/admin/products/[id]/variants/[variantId]	DELETE	removeVariant
+/api/admin/products/[id]/stock	PATCH	setProductStock
+/api/admin/products/[id]/variants/[variantId]/stock	PATCH	setVariantStock
+/api/admin/products/[id]/attributes	POST	createAttribute
+/api/admin/products/[id]/attributes/[attributeId]	PATCH	updateAttribute
+/api/admin/products/[id]/attributes/[attributeId]	DELETE	removeAttribute
+/api/admin/products/[id]/attributes/[attributeId]/values	POST	createAttributeValue
+/api/admin/products/[id]/attributes/[attributeId]/values/[valueId]	PATCH	updateAttributeValue
+/api/admin/products/[id]/attributes/[attributeId]/values/[valueId]	DELETE	removeAttributeValue

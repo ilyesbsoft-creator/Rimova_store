@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   createOrder,
   OrderServiceError,
-} from "@/backend/modules/order/order.service";
+} from "@/backend/modules/orders/order.service";
 
 
 export async function POST(request: Request) {

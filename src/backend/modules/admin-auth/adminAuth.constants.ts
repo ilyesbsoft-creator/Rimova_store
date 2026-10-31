@@ -1,0 +1,1 @@
+export const ADMIN_SESSION_COOKIE = "rimova_admin_session";

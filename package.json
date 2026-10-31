@@ -10,8 +10,11 @@
     "migrate": "knex migrate:latest --knexfile knexfile.ts"
   },
   "dependencies": {
+    "argon2": "^0.45.1",
+    "cloudinary": "^2.11.0",
     "dotenv": "^18.0.9",
     "knex": "^3.3.0",
+    "lucide-react": "^1.66.0",
     "motion": "^14.7.1",
     "mysql2": "^3.24.6",
     "next": "16.4.3",
