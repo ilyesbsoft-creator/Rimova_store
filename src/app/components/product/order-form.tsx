@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import type { getDeliveryOptions } from "@/backend/modules/delivery/delivery.service";
 import type { getProductById } from "@/backend/modules/products/product.service";
+import { House, MapPin } from "lucide-react";
 
 type DeliveryOptions = NonNullable<
   Awaited<ReturnType<typeof getDeliveryOptions>>
@@ -46,22 +47,20 @@ export default function OrderForm({
   deliveryOptions,
 }: OrderFormProps) {
   const router = useRouter();
-  
+
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
 
-  const [wilayaId, setWilayaId] = useState("");
-  const [communeId, setCommuneId] = useState("");
-
   const [deliveryMethod, setDeliveryMethod] =
     useState<DeliveryMethod>("home");
 
+  const [wilayaId, setWilayaId] = useState("");
+  const [communeId, setCommuneId] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [selectedOfficeId, setSelectedOfficeId] = useState("");
 
   // تخزين اختيار المستخدم لكل خاصية على حدة.
-  // مثال: { "color-attribute-id": "red-value-id", "size-attribute-id": "size-m-id" }
   const [selectedAttributeValues, setSelectedAttributeValues] =
     useState<SelectedAttributeValues>({});
 
@@ -101,8 +100,7 @@ export default function OrderForm({
     }
 
     const allAttributesSelected = availableAttributes.every(
-      (attribute) =>
-        Boolean(selectedAttributeValues[attribute.id]),
+      (attribute) => Boolean(selectedAttributeValues[attribute.id]),
     );
 
     if (!allAttributesSelected) {
@@ -147,7 +145,6 @@ export default function OrderForm({
   const subtotal = unitPrice * quantity;
 
   // يحدد ما إذا كان اختيار قيمة معينة سيؤدي إلى متغير متوفر.
-  // يراعي الاختيارات الحالية لبقية الخصائص.
   function isAttributeValueAvailable(
     attributeId: string,
     valueId: string,
@@ -180,7 +177,6 @@ export default function OrderForm({
 
         const selectedValueId = selectedAttributeValues[attribute.id];
 
-        // الخصائص التي لم يختر المستخدم قيمتها لا تقيد البحث.
         if (!selectedValueId) {
           return true;
         }
@@ -212,6 +208,7 @@ export default function OrderForm({
     setOrderNumber("");
   }
 
+  // الولاية المختارة.
   const selectedWilaya = useMemo(
     () =>
       deliveryOptions?.wilayas.find(
@@ -220,24 +217,26 @@ export default function OrderForm({
     [deliveryOptions, wilayaId],
   );
 
-  const communes = selectedWilaya?.communes ?? [];
+  // البلديات والمكاتب التابعة للولاية المختارة.
+  const communes = selectedWilaya?.home_delivery.communes ?? [];
+
+  const offices = selectedWilaya?.office_delivery.offices ?? [];
 
   const selectedCommune = communes.find(
     (commune) => commune.id === communeId,
   );
 
-  const deliveryPrice =
-    selectedCommune === undefined
-      ? null
-      : deliveryMethod === "home"
-        ? selectedCommune.home_delivery_price
-        : selectedCommune.office_delivery_price;
-
-  const offices = selectedCommune?.delivery_offices ?? [];
-
   const selectedOffice = offices.find(
     (office) => office.id === selectedOfficeId,
   );
+
+  // سعر التوصيل يعتمد على الولاية وطريقة التوصيل فقط.
+  const deliveryPrice =
+    selectedWilaya === undefined
+      ? null
+      : deliveryMethod === "home"
+        ? selectedWilaya.home_delivery.price
+        : selectedWilaya.office_delivery.price;
 
   const totalPrice =
     (hasVariants && !selectedVariant) ||
@@ -251,23 +250,43 @@ export default function OrderForm({
     deliveryOptions !== undefined &&
     deliveryOptions.wilayas.length > 0;
 
-function resetOrderForm() {
-  setFirstName("");
-  setLastName("");
-  setPhone("");
+  function resetOrderForm() {
+    setFirstName("");
+    setLastName("");
+    setPhone("");
 
-  setWilayaId("");
-  setCommuneId("");
+    setDeliveryMethod("home");
+    setWilayaId("");
+    setCommuneId("");
+    setDeliveryAddress("");
+    setSelectedOfficeId("");
 
-  setDeliveryMethod("home");
-  setDeliveryAddress("");
-  setSelectedOfficeId("");
+    setSelectedAttributeValues({});
+    setQuantity(1);
 
-  setSelectedAttributeValues({});
-  setQuantity(1);
+    setFeedback("");
+  }
 
-  setFeedback("");
-}
+  function handleDeliveryMethodChange(method: DeliveryMethod) {
+    setDeliveryMethod(method);
+
+    // مسح الاختيارات المرتبطة بطريقة التوصيل السابقة.
+    setCommuneId("");
+    setSelectedOfficeId("");
+    setDeliveryAddress("");
+
+    setFeedback("");
+  }
+
+  function handleWilayaChange(nextWilayaId: string) {
+    setWilayaId(nextWilayaId);
+
+    // لا نحتفظ ببلدية أو مكتب من ولاية سابقة.
+    setCommuneId("");
+    setSelectedOfficeId("");
+
+    setFeedback("");
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -316,14 +335,26 @@ function resetOrderForm() {
       return;
     }
 
-    if (!deliveryOptions || !selectedWilaya || !selectedCommune) {
-      setFeedback("يرجى اختيار الولاية والبلدية.");
+    if (!deliveryOptions || !selectedWilaya) {
+      setFeedback("يرجى اختيار طريقة التوصيل والولاية.");
+      return;
+    }
+
+    // في التوصيل إلى المنزل يجب اختيار البلدية.
+    if (deliveryMethod === "home" && !selectedCommune) {
+      setFeedback("يرجى اختيار البلدية.");
+      return;
+    }
+
+    // في الاستلام من المكتب يجب اختيار مكتب محدد.
+    if (deliveryMethod === "office" && !selectedOffice) {
+      setFeedback("يرجى اختيار مكتب الاستلام.");
       return;
     }
 
     if (deliveryPrice === null || deliveryPrice === undefined) {
       setFeedback(
-        "التوصيل غير متاح لهذا الخيار في البلدية المختارة.",
+        "التوصيل غير متاح للولاية المختارة بطريقة التوصيل هذه.",
       );
       return;
     }
@@ -342,23 +373,25 @@ function resetOrderForm() {
           customer_phone: phone.trim(),
 
           wilaya_id: wilayaId,
-          commune_id: communeId,
+
+          // البلدية مطلوبة للتوصيل إلى المنزل فقط.
+          ...(deliveryMethod === "home"
+            ? { commune_id: communeId }
+            : {}),
+
           delivery_company_id: deliveryOptions.company.id,
 
           delivery_method:
             deliveryMethod === "home" ? "HOME" : "OFFICE",
 
-          // عنوان المنزل اختياري.
-          delivery_address:
-            deliveryMethod === "home" && deliveryAddress.trim()
-              ? deliveryAddress.trim()
-              : null,
-
-          // اختيار مكتب الاستلام اختياري.
-          delivery_office_id:
-            deliveryMethod === "office" && selectedOfficeId
-              ? selectedOfficeId
-              : null,
+          // العنوان التفصيلي اختياري في التوصيل إلى المنزل.
+          ...(deliveryMethod === "home"
+            ? {
+                delivery_address: deliveryAddress.trim() || null,
+              }
+            : {
+                delivery_office_id: selectedOfficeId,
+              }),
 
           customer_note: null,
 
@@ -397,16 +430,16 @@ function resetOrderForm() {
         return;
       }
 
-      // الاحتفاظ برقم الطلب وإظهار رسالة النجاح.
-setOrderNumber(result.order_number);
-setFeedback("تم إنشاء طلبك بنجاح!");
+      const createdOrderNumber = result.order_number;
 
-// تفريغ الحقول وإعادة النموذج إلى حالته الافتراضية.
-resetOrderForm();
+      // إعادة النموذج إلى حالته الافتراضية بعد نجاح الطلب.
+      resetOrderForm();
 
-// إعادة جلب بيانات صفحة المنتج من الخادم.
-router.refresh();
+      setOrderNumber(createdOrderNumber);
+      setFeedback("تم إنشاء طلبك بنجاح!");
 
+      // إعادة جلب بيانات صفحة المنتج من الخادم.
+      router.refresh();
     } catch (error) {
       console.error("Failed to submit order:", error);
 
@@ -446,8 +479,8 @@ router.refresh();
             </h2>
 
             <p className="mt-2 text-sm leading-7 text-gray-500">
-              أدخل معلوماتك واختر مكان التوصيل لمعرفة التكلفة الإجمالية
-              قبل تأكيد الطلب.
+              أدخل معلوماتك واختر طريقة التوصيل والولاية لمعرفة
+              التكلفة الإجمالية قبل تأكيد الطلب.
             </p>
 
             <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl bg-[#e9e6dd]/65 p-4">
@@ -776,8 +809,8 @@ router.refresh();
                     className={`${inputClassName} text-left`}
                   />
                   <p className="mt-2 text-xs leading-5 text-gray-500">
-                    أدخل رقم هاتف صالحًا حتى تتمكن شركة التوصيل من التواصل
-                    معك.
+                    أدخل رقم هاتف صالحًا حتى تتمكن شركة التوصيل من
+                    التواصل معك.
                   </p>
                 </div>
               </div>
@@ -796,7 +829,7 @@ router.refresh();
                     معلومات التوصيل
                   </h3>
                   <p className="mt-1 text-xs text-gray-500">
-                    اختر الولاية والبلدية وطريقة الاستلام
+                    اختر طريقة التوصيل أولًا، ثم الولاية
                   </p>
                 </div>
               </div>
@@ -810,96 +843,35 @@ router.refresh();
                 </div>
               ) : (
                 <>
-                  <div className="grid gap-5 sm:grid-cols-2">
-                    <div>
-                      <label
-                        htmlFor="delivery-wilaya"
-                        className={labelClassName}
-                      >
-                        الولاية <span className="text-red-600">*</span>
-                      </label>
-                      <select
-                        id="delivery-wilaya"
-                        name="wilayaId"
-                        required
-                        value={wilayaId}
-                        onChange={(event) => {
-                          setWilayaId(event.target.value);
-                          setCommuneId("");
-                          setSelectedOfficeId("");
-                          setFeedback("");
-                        }}
-                        className={inputClassName}
-                      >
-                        <option value="">اختر الولاية</option>
-                        {deliveryOptions!.wilayas.map((wilaya) => (
-                          <option key={wilaya.id} value={wilaya.id}>
-                            {wilaya.code} — {wilaya.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="delivery-commune"
-                        className={labelClassName}
-                      >
-                        البلدية <span className="text-red-600">*</span>
-                      </label>
-                      <select
-                        id="delivery-commune"
-                        name="communeId"
-                        required
-                        disabled={!wilayaId || communes.length === 0}
-                        value={communeId}
-                        onChange={(event) => {
-                          setCommuneId(event.target.value);
-                          setSelectedOfficeId("");
-                          setFeedback("");
-                        }}
-                        className={inputClassName}
-                      >
-                        <option value="">
-                          {!wilayaId
-                            ? "اختر الولاية أولًا"
-                            : communes.length === 0
-                              ? "لا توجد بلديات متاحة"
-                              : "اختر البلدية"}
-                        </option>
-                        {communes.map((commune) => (
-                          <option key={commune.id} value={commune.id}>
-                            {commune.code
-                              ? `${commune.code} — ${commune.name}`
-                              : commune.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="mt-6">
-                    <p className={labelClassName}>طريقة التوصيل</p>
+                  {/* أولًا: اختيار طريقة التوصيل */}
+                  <div>
+                    <p className={labelClassName}>
+                      طريقة التوصيل{" "}
+                      <span className="text-red-600">*</span>
+                    </p>
 
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <button
                         type="button"
                         aria-pressed={deliveryMethod === "home"}
-                        onClick={() => {
-                          setDeliveryMethod("home");
-                          setSelectedOfficeId("");
-                          setFeedback("");
-                        }}
+                        onClick={() =>
+                          handleDeliveryMethodChange("home")
+                        }
                         className={`rounded-2xl border p-4 text-right transition duration-200 ${
                           deliveryMethod === "home"
                             ? "border-[#85816d] bg-[#e9e6dd]/65 ring-2 ring-[#85816d]/10"
                             : "border-[#d9d6cb] bg-white hover:border-[#b5b09f]"
                         }`}
                       >
-                        <span className="flex items-center justify-between gap-3">
-                          <span className="font-bold">
-                            التوصيل إلى المنزل
-                          </span>
+<span className="flex items-center justify-between gap-3">
+  <span className="flex items-center gap-2 font-bold">
+    <House
+      size={25}
+      strokeWidth={2}
+      className="text-[#85816d]"
+    />
+    التوصيل إلى المنزل
+  </span>
                           <span
                             className={`flex h-5 w-5 items-center justify-center rounded-full border ${
                               deliveryMethod === "home"
@@ -914,27 +886,32 @@ router.refresh();
                           </span>
                         </span>
                         <span className="mt-2 block text-xs leading-5 text-gray-500">
-                          استلم طلبك في عنوانك، ويمكنك ترك العنوان فارغًا.
+                          استلم طلبك في عنوانك. يمكنك ترك العنوان التفصيلي
+                          فارغًا.
                         </span>
                       </button>
 
                       <button
                         type="button"
                         aria-pressed={deliveryMethod === "office"}
-                        onClick={() => {
-                          setDeliveryMethod("office");
-                          setFeedback("");
-                        }}
+                        onClick={() =>
+                          handleDeliveryMethodChange("office")
+                        }
                         className={`rounded-2xl border p-4 text-right transition duration-200 ${
                           deliveryMethod === "office"
                             ? "border-[#85816d] bg-[#e9e6dd]/65 ring-2 ring-[#85816d]/10"
                             : "border-[#d9d6cb] bg-white hover:border-[#b5b09f]"
                         }`}
                       >
-                        <span className="flex items-center justify-between gap-3">
-                          <span className="font-bold">
-                            الاستلام من المكتب
-                          </span>
+<span className="flex items-center justify-between gap-3">
+  <span className="flex items-center gap-2 font-bold">
+    <MapPin
+      size={25}
+      strokeWidth={2}
+      className="text-[#85816d]"
+    />
+    الاستلام من المكتب
+  </span>
                           <span
                             className={`flex h-5 w-5 items-center justify-center rounded-full border ${
                               deliveryMethod === "office"
@@ -949,47 +926,118 @@ router.refresh();
                           </span>
                         </span>
                         <span className="mt-2 block text-xs leading-5 text-gray-500">
-                          يمكنك اختيار مكتب إن رغبت، دون إلزامك بذلك.
+                          اختر مكتب الاستلام المناسب من مكاتب الولاية.
                         </span>
                       </button>
                     </div>
                   </div>
 
-                  {/* العنوان اختياري */}
-                  {deliveryMethod === "home" && (
-                    <div className="mt-5">
-                      <label
-                        htmlFor="delivery-address"
-                        className={labelClassName}
-                      >
-                        عنوان التوصيل{" "}
-                        <span className="font-normal text-gray-400">
-                          (اختياري)
-                        </span>
-                      </label>
-                      <textarea
-                        id="delivery-address"
-                        name="deliveryAddress"
-                        rows={3}
-                        maxLength={500}
-                        value={deliveryAddress}
-                        onChange={(event) =>
-                          setDeliveryAddress(event.target.value)
-                        }
-                        placeholder="أدخل عنوانك التفصيلي إن رغبت..."
-                        className={`${inputClassName} min-h-24 resize-y py-4`}
-                      />
+                  {/* ثانيًا: اختيار الولاية */}
+                  <div className="mt-6">
+                    <label
+                      htmlFor="delivery-wilaya"
+                      className={labelClassName}
+                    >
+                      الولاية <span className="text-red-600">*</span>
+                    </label>
+
+                    <select
+                      id="delivery-wilaya"
+                      name="wilayaId"
+                      required
+                      value={wilayaId}
+                      onChange={(event) =>
+                        handleWilayaChange(event.target.value)
+                      }
+                      className={inputClassName}
+                    >
+                      <option value="">اختر الولاية</option>
+                      {deliveryOptions.wilayas.map((wilaya) => (
+                        <option key={wilaya.id} value={wilaya.id}>
+                          {wilaya.code} — {wilaya.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* ثالثًا: تفاصيل التوصيل إلى المنزل */}
+                  {deliveryMethod === "home" && selectedWilaya && (
+                    <div className="mt-5 space-y-5">
+                      <div>
+                        <label
+                          htmlFor="delivery-commune"
+                          className={labelClassName}
+                        >
+                          البلدية <span className="text-red-600">*</span>
+                        </label>
+
+                        <select
+                          id="delivery-commune"
+                          name="communeId"
+                          required
+                          disabled={communes.length === 0}
+                          value={communeId}
+                          onChange={(event) => {
+                            setCommuneId(event.target.value);
+                            setFeedback("");
+                          }}
+                          className={inputClassName}
+                        >
+                          <option value="">
+                            {communes.length === 0
+                              ? "لا توجد بلديات متاحة"
+                              : "اختر البلدية"}
+                          </option>
+
+                          {communes.map((commune) => (
+                            <option key={commune.id} value={commune.id}>
+                              {commune.code
+                                ? `${commune.name}`
+                                : commune.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="delivery-address"
+                          className={labelClassName}
+                        >
+                          عنوان التوصيل{" "}
+                          <span className="font-normal text-gray-400">
+                            (اختياري)
+                          </span>
+                        </label>
+
+                        <textarea
+                          id="delivery-address"
+                          name="deliveryAddress"
+                          rows={3}
+                          maxLength={500}
+                          value={deliveryAddress}
+                          onChange={(event) =>
+                            setDeliveryAddress(event.target.value)
+                          }
+                          placeholder="أدخل عنوانك التفصيلي إن رغبت..."
+                          className={`${inputClassName} min-h-24 resize-y py-4`}
+                        />
+                      </div>
                     </div>
                   )}
 
-                  {/* عرض المكاتب عند اختيار OFFICE فقط */}
-                  {deliveryMethod === "office" && selectedCommune && (
+                  {/* ثالثًا: اختيار مكتب من جميع مكاتب الولاية */}
+                  {deliveryMethod === "office" && selectedWilaya && (
                     <div className="mt-5">
                       <p className={labelClassName}>
-                        مكاتب الاستلام{" "}
-                        <span className="font-normal text-gray-400">
-                          (اختياري)
-                        </span>
+                        مكتب الاستلام{" "}
+                        <span className="text-red-600">*</span>
+                      </p>
+
+                      <p className="mt-1 text-xs leading-6 text-gray-500">
+                        تظهر هنا جميع مكاتب شركة التوصيل الموجودة في
+                        ولاية {selectedWilaya.name}، بغض النظر عن البلدية
+                        التابعة لها.
                       </p>
 
                       {offices.length > 0 ? (
@@ -1004,9 +1052,7 @@ router.refresh();
                                 type="button"
                                 aria-pressed={isSelected}
                                 onClick={() => {
-                                  setSelectedOfficeId(
-                                    isSelected ? "" : office.id,
-                                  );
+                                  setSelectedOfficeId(office.id);
                                   setFeedback("");
                                 }}
                                 className={`block w-full rounded-2xl border p-4 text-right transition ${
@@ -1019,6 +1065,7 @@ router.refresh();
                                   <span className="font-bold">
                                     {office.name}
                                   </span>
+
                                   <span
                                     className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
                                       isSelected
@@ -1054,20 +1101,11 @@ router.refresh();
                               </button>
                             );
                           })}
-
-                          <button
-                            type="button"
-                            onClick={() => setSelectedOfficeId("")}
-                            disabled={!selectedOfficeId}
-                            className="text-sm text-gray-500 underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            متابعة دون اختيار مكتب
-                          </button>
                         </div>
                       ) : (
                         <p className="mt-3 rounded-xl border border-[#d9d6cb] bg-white p-4 text-sm leading-6 text-gray-500">
-                          لا توجد مكاتب متاحة في هذه البلدية. يمكنك
-                          متابعة الطلب دون اختيار مكتب.
+                          لا توجد مكاتب استلام متاحة في هذه الولاية
+                          حاليًا.
                         </p>
                       )}
                     </div>
@@ -1081,15 +1119,23 @@ router.refresh();
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <p className="font-bold">سعر التوصيل</p>
+
                         <p className="mt-1 text-sm leading-6 text-gray-500">
-                          {selectedCommune
-                            ? `${selectedCommune.name} · ${
+                          {!selectedWilaya
+                            ? "اختر الولاية لعرض سعر التوصيل"
+                            : `${selectedWilaya.name} · ${
                                 deliveryMethod === "home"
                                   ? "إلى المنزل"
-                                  : "إلى المكتب"
-                              }`
-                            : "اختر الولاية والبلدية لعرض السعر"}
+                                  : "إلى مكتب الاستلام"
+                              }`}
                         </p>
+
+                        {deliveryMethod === "home" &&
+                          selectedCommune && (
+                            <p className="mt-1 text-xs text-gray-500">
+                              البلدية: {selectedCommune.name}
+                            </p>
+                          )}
 
                         {deliveryMethod === "office" &&
                           selectedOffice && (
@@ -1107,7 +1153,7 @@ router.refresh();
                       </p>
                     </div>
 
-                    {selectedCommune &&
+                    {selectedWilaya &&
                       deliveryPrice !== null &&
                       deliveryPrice !== undefined &&
                       (!hasVariants || selectedVariant) && (
@@ -1195,8 +1241,8 @@ router.refresh();
             </button>
 
             <p className="text-center text-xs leading-6 text-gray-500">
-              يمكنك إرسال طلبك دون إدخال عنوان المنزل أو اختيار مكتب
-              استلام.
+              عنوان المنزل التفصيلي اختياري، لكن يجب اختيار بلدية
+              للتوصيل إلى المنزل أو مكتب محدد للاستلام من المكتب.
             </p>
           </form>
         </motion.div>

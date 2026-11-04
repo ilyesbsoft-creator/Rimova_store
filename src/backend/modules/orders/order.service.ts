@@ -2,6 +2,8 @@
 import { randomUUID } from "node:crypto";
 import db from "../../database/knex";
 
+import type { UpdateOrderItemPayload } from "./order.validation";
+
 import {
   findActiveProductForOrder,
   findActiveVariantForOrder,
@@ -26,6 +28,7 @@ import {
   findOrderItemForUpdate,
   insertAdminOrderItem,
   updateAdminOrderItemQuantity,
+  updateAdminOrderItem,
   deleteAdminOrderItem,
   calculateOrderSubtotal,
   findOrderStatistics,
@@ -92,6 +95,7 @@ function toCents(value: string | number): number {
   return Math.round(numericValue * 100);
 }
 
+
 export async function createOrder(input: CreateOrderInput) {
   // 1. التحقق من المدخلات قبل بدء العملية
   const firstName = requiredText(
@@ -120,7 +124,7 @@ export async function createOrder(input: CreateOrderInput) {
     throw new OrderServiceError("INVALID_DELIVERY_METHOD");
   }
 
-  // عنوان المنزل والمكتب كلاهما اختياريان.
+  // عنوان المنزل والمكتب
   const address = input.delivery_address?.trim() || null;
   const officeId = input.delivery_office_id?.trim() || null;
 
@@ -146,26 +150,54 @@ export async function createOrder(input: CreateOrderInput) {
       );
     }
 
-    // 4. التأكد من أن البلدية تتبع الولاية المختارة
-    const commune = await findActiveCommuneInWilaya(
-      input.commune_id,
-      input.wilaya_id,
-      trx
-    );
+    // 4. تحديد البلدية والتحقق منها
+    let communeId: string;
 
-    if (!commune) {
-      throw new OrderServiceError(
-        "INVALID_WILAYA_OR_COMMUNE"
+    if (input.delivery_method === "HOME") {
+      // في التوصيل إلى المنزل، البلدية تأتي من الواجهة.
+      const commune = await findActiveCommuneInWilaya(
+        input.commune_id,
+        input.wilaya_id,
+        trx
       );
+
+      if (!commune) {
+        throw new OrderServiceError(
+          "INVALID_WILAYA_OR_COMMUNE"
+        );
+      }
+
+      communeId = commune.id;
+    } else {
+      // في التوصيل إلى المكتب، نستخرج البلدية من المكتب.
+      if (!officeId) {
+        throw new OrderServiceError(
+          "DELIVERY_OFFICE_REQUIRED"
+        );
+      }
+
+      const office = await findActiveDeliveryOffice(
+        officeId,
+        company.id,
+        trx
+      );
+
+      if (!office) {
+        throw new OrderServiceError(
+          "DELIVERY_OFFICE_NOT_AVAILABLE"
+        );
+      }
+
+      communeId = office.commune_id;
     }
 
-    // 5. التحقق من خيار التوصيل وحساب تكلفته من قاعدة البيانات
+    // 5. التحقق من خيار التوصيل وحساب تكلفته
     let deliveryFeeCents: number;
 
     if (input.delivery_method === "HOME") {
       const rate = await findActiveHomeDeliveryRate(
         company.id,
-        commune.id,
+        input.wilaya_id,
         trx
       );
 
@@ -177,28 +209,9 @@ export async function createOrder(input: CreateOrderInput) {
 
       deliveryFeeCents = toCents(rate.price);
     } else {
-      // اختيار المكتب اختياري.
-      // إذا أُرسل معرّف مكتب، يجب التحقق من صلاحيته.
-      if (officeId !== null) {
-        const office = await findActiveDeliveryOffice(
-          officeId,
-          company.id,
-          commune.id,
-          trx
-        );
-
-        if (!office) {
-          throw new OrderServiceError(
-            "DELIVERY_OFFICE_NOT_AVAILABLE"
-          );
-        }
-      }
-
-      // الرسوم تعتمد على شركة التوصيل والبلدية،
-      // ولا تتطلب تحديد مكتب بعينه.
       const rate = await findActiveOfficeDeliveryRate(
         company.id,
-        commune.id,
+        input.wilaya_id,
         trx
       );
 
@@ -262,7 +275,8 @@ export async function createOrder(input: CreateOrderInput) {
         variant?.price ?? product.price
       );
 
-      const lineTotalCents = unitPriceCents * item.quantity;
+      const lineTotalCents =
+        unitPriceCents * item.quantity;
 
       if (!Number.isSafeInteger(lineTotalCents)) {
         throw new OrderServiceError("ORDER_AMOUNT_TOO_LARGE");
@@ -276,7 +290,7 @@ export async function createOrder(input: CreateOrderInput) {
 
       orderItems.push({
         id: randomUUID(),
-        order_id: "", // يُحدد بعد إنشاء الطلب
+        order_id: "",
         product_id: product.id,
         product_variant_id: variant?.id ?? null,
         product_name: product.name,
@@ -306,15 +320,19 @@ export async function createOrder(input: CreateOrderInput) {
       customer_last_name: lastName,
       customer_phone: phone,
       wilaya_id: input.wilaya_id,
-      commune_id: input.commune_id,
+      commune_id: communeId,
       delivery_company_id: company.id,
       delivery_method: input.delivery_method,
 
       delivery_office_id:
-        input.delivery_method === "OFFICE" ? officeId : null,
+        input.delivery_method === "OFFICE"
+          ? officeId
+          : null,
 
       delivery_address:
-        input.delivery_method === "HOME" ? address : null,
+        input.delivery_method === "HOME"
+          ? address
+          : null,
 
       delivery_fee: deliveryFeeCents / 100,
       subtotal: subtotalCents / 100,
@@ -325,7 +343,7 @@ export async function createOrder(input: CreateOrderInput) {
 
     await insertOrder(order, trx);
 
-    // 9. ربط العناصر بالطلب الذي أُنشئ
+    // 9. ربط العناصر بالطلب
     for (const item of orderItems) {
       item.order_id = orderId;
     }
@@ -361,6 +379,7 @@ export async function createOrder(input: CreateOrderInput) {
     };
   });
 }
+
 
 
 /* =========================================================
@@ -832,6 +851,152 @@ export async function changeOrderItemQuantity(
   });
 }
 
+export async function updateOrderItem(
+  orderId: string,
+  itemId: string,
+  input: UpdateOrderItemPayload
+) {
+  return db.transaction(async (trx) => {
+    // 1. قفل الطلب والتحقق من إمكانية تعديله
+    const order = await findOrderForUpdate(orderId, trx);
+
+    if (!order) {
+      throw new OrderServiceError("ORDER_NOT_FOUND", 404);
+    }
+
+    assertEditableOrderStatus(order.status);
+
+    // 2. قفل عنصر الطلب
+    const currentItem = await findOrderItemForUpdate(
+      itemId,
+      orderId,
+      trx
+    );
+
+    if (!currentItem) {
+      throw new OrderServiceError("ORDER_ITEM_NOT_FOUND", 404);
+    }
+
+    const quantity = toSafeQuantity(input.quantity);
+
+    // 3. التحقق من المنتج الجديد
+    const product = await findActiveProductForOrder(
+      input.product_id,
+      trx
+    );
+
+    if (!product) {
+      throw new OrderServiceError("PRODUCT_NOT_FOUND", 404);
+    }
+
+    // 4. التحقق من النسخة المختارة إن وجدت
+    const variant = input.product_variant_id
+      ? await findActiveVariantForOrder(
+          product.id,
+          input.product_variant_id,
+          trx
+        )
+      : null;
+
+    if (input.product_variant_id && !variant) {
+      throw new OrderServiceError("VARIANT_NOT_FOUND", 404);
+    }
+
+    // 5. تحديد مصدر المخزون القديم والجديد
+    const oldProductId = currentItem.product_id;
+    const oldVariantId = currentItem.product_variant_id;
+
+    const newProductId = product.id;
+    const newVariantId = variant?.id ?? null;
+
+    const sameInventorySource =
+      oldProductId === newProductId &&
+      oldVariantId === newVariantId;
+
+    // 6. تعديل المخزون
+    if (sameInventorySource) {
+      const difference = quantity - currentItem.quantity;
+
+      if (difference > 0) {
+        if (newVariantId) {
+          await decreaseVariantStock(newVariantId, difference, trx);
+        } else {
+          await decreaseProductStock(newProductId, difference, trx);
+        }
+      } else if (difference < 0) {
+        const returnedQuantity = Math.abs(difference);
+
+        if (oldVariantId) {
+          await increaseVariantStock(
+            oldVariantId,
+            returnedQuantity,
+            trx
+          );
+        } else {
+          await increaseProductStock(
+            oldProductId!,
+            returnedQuantity,
+            trx
+          );
+        }
+      }
+    } else {
+      // إرجاع كمية العنصر القديم إلى مخزونه
+      if (oldVariantId) {
+        await increaseVariantStock(
+          oldVariantId,
+          currentItem.quantity,
+          trx
+        );
+      } else if (oldProductId) {
+        await increaseProductStock(
+          oldProductId,
+          currentItem.quantity,
+          trx
+        );
+      }
+
+      // حجز الكمية من مخزون المنتج أو النسخة الجديدة
+      if (newVariantId) {
+        await decreaseVariantStock(newVariantId, quantity, trx);
+      } else {
+        await decreaseProductStock(newProductId, quantity, trx);
+      }
+    }
+
+    // 7. تحديد السعر وبيانات العنصر الجديدة
+    const unitPrice = Number(variant?.price ?? product.price);
+
+    const affectedRows = await updateAdminOrderItem(
+      itemId,
+      orderId,
+      {
+        product_id: newProductId,
+        product_variant_id: newVariantId,
+        product_name: product.name,
+        product_sku: variant?.sku ?? product.sku,
+        quantity,
+        unit_price: unitPrice,
+      },
+      trx
+    );
+
+    if (affectedRows !== 1) {
+      throw new OrderServiceError("ORDER_ITEM_UPDATE_FAILED", 500);
+    }
+
+    // 8. إعادة حساب إجمالي الطلب
+    await recalculateOrderTotals(order, trx);
+
+    return {
+      id: itemId,
+      product_id: newProductId,
+      product_variant_id: newVariantId,
+      quantity,
+      unit_price: unitPrice,
+    };
+  });
+}
 /* =========================================================
    REMOVE ITEM FROM ORDER
 ========================================================= */
@@ -987,11 +1152,11 @@ export async function updateOrderDeliveryInfo(
         );
       }
 
-      rate = await findActiveHomeDeliveryRate(
-        company.id,
-        commune.id,
-        trx
-      );
+rate = await findActiveHomeDeliveryRate(
+  company.id,
+  input.wilaya_id,
+  trx
+);
 
       if (!rate) {
         throw new OrderServiceError(
@@ -1014,11 +1179,11 @@ export async function updateOrderDeliveryInfo(
         }
       }
 
-      rate = await findActiveOfficeDeliveryRate(
-        company.id,
-        commune.id,
-        trx
-      );
+rate = await findActiveOfficeDeliveryRate(
+  company.id,
+  input.wilaya_id,
+  trx
+);
 
       if (!rate) {
         throw new OrderServiceError(

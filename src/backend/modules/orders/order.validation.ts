@@ -35,6 +35,64 @@ const limitSchema = z.coerce
   .min(1)
   .max(100)
   .default(20);
+  
+/* =========================================================
+   CREATE STORE ORDER
+========================================================= */
+
+const createOrderItemSchema = z.object({
+  product_id: uuidSchema,
+
+  product_variant_id: uuidSchema.nullable().optional(),
+
+  quantity: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100000),
+});
+
+const createOrderCommonSchema = z.object({
+  customer_first_name: z.string().trim().min(1).max(100),
+
+  customer_last_name: z.string().trim().min(1).max(100),
+
+  customer_phone: z.string().trim().min(1).max(30),
+
+  customer_note: z.string().trim().max(5000).nullable().optional(),
+
+  wilaya_id: uuidSchema,
+
+  delivery_company_id: uuidSchema,
+
+  items: z.array(createOrderItemSchema).min(1).max(100),
+});
+
+export const createOrderSchema = z.discriminatedUnion(
+  "delivery_method",
+  [
+    createOrderCommonSchema.extend({
+      delivery_method: z.literal("HOME"),
+
+      commune_id: uuidSchema,
+
+      delivery_address: z
+        .string()
+        .trim()
+        .max(500)
+        .nullable()
+        .optional(),
+    }),
+
+    createOrderCommonSchema.extend({
+      delivery_method: z.literal("OFFICE"),
+
+      delivery_office_id: uuidSchema,
+    }),
+  ],
+);
+
+export type CreateOrderPayload = z.infer<typeof createOrderSchema>;  
 
 /* =========================================================
    ORDER ID
@@ -166,12 +224,14 @@ export const addOrderItemSchema = z.object({
 ========================================================= */
 
 export const updateOrderItemSchema = z.object({
-  quantity: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(100000),
+  product_id: uuidSchema,
+  product_variant_id: uuidSchema.nullable(),
+  quantity: z.coerce.number().int().min(1).max(100000),
 });
+
+export type UpdateOrderItemPayload = z.infer<
+  typeof updateOrderItemSchema
+>;
 
 /* =========================================================
    ORDER STATISTICS

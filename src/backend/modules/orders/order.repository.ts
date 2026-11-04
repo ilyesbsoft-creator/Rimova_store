@@ -154,26 +154,26 @@ export async function findActiveCommuneInWilaya(
 
 export async function findActiveHomeDeliveryRate(
   companyId: string,
-  communeId: string,
+  wilayaId: string,
   trx: Knex.Transaction
 ): Promise<OrderDeliveryRateRow | undefined> {
   return trx<OrderDeliveryRateRow>("home_delivery_rates")
     .select("price")
     .where("delivery_company_id", companyId)
-    .where("commune_id", communeId)
+    .where("wilaya_id", wilayaId)
     .where("is_active", true)
     .first();
 }
 
 export async function findActiveOfficeDeliveryRate(
   companyId: string,
-  communeId: string,
+  wilayaId: string,
   trx: Knex.Transaction
 ): Promise<OrderDeliveryRateRow | undefined> {
   return trx<OrderDeliveryRateRow>("office_delivery_rates")
     .select("price")
     .where("delivery_company_id", companyId)
-    .where("commune_id", communeId)
+    .where("wilaya_id", wilayaId)
     .where("is_active", true)
     .first();
 }
@@ -181,14 +181,12 @@ export async function findActiveOfficeDeliveryRate(
 export async function findActiveDeliveryOffice(
   officeId: string,
   companyId: string,
-  communeId: string,
   trx: Knex.Transaction
 ) {
   return trx("delivery_offices")
-    .select("id", "name", "address")
+    .select("id","commune_id", "name", "address")
     .where("id", officeId)
     .where("delivery_company_id", companyId)
-    .where("commune_id", communeId)
     .where("is_active", true)
     .first();
 }
@@ -630,6 +628,36 @@ export async function updateAdminOrderItemQuantity(
     .where("id", itemId)
     .where("order_id", orderId)
     .update({ quantity });
+}
+
+export async function updateAdminOrderItem(
+  itemId: string,
+  orderId: string,
+  data: {
+    product_id: string;
+    product_variant_id: string | null;
+    product_name: string;
+    product_sku: string | null;
+    quantity: number;
+    unit_price: number;
+  },
+  trx: DatabaseConnection
+): Promise<number> {
+  const affectedRows = await trx("order_items")
+    .where({
+      id: itemId,
+      order_id: orderId,
+    })
+    .update({
+      product_id: data.product_id,
+      product_variant_id: data.product_variant_id,
+      product_name: data.product_name,
+      product_sku: data.product_sku,
+      quantity: data.quantity,
+      unit_price: data.unit_price,
+    });
+
+  return affectedRows;
 }
 
 export async function deleteAdminOrderItem(

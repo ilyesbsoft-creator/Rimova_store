@@ -1,6 +1,10 @@
 
 "use client";
 
+
+import Link from "next/link";
+import { Tags } from "lucide-react";
+
 import {
   useCallback,
   useEffect,
@@ -1875,34 +1879,44 @@ export default function ProductsPage() {
       className="mx-auto w-full max-w-[1600px] space-y-6"
     >
       {/* Page heading */}
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <div className="flex items-center gap-2 text-[11px] text-gray-400">
-            <span>إدارة المتجر</span>
-            <Icon name="chevron" size={13} />
-            <span className="font-semibold text-[#85816d]">
-              المنتجات
-            </span>
-          </div>
+<div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+  <div>
+    <div className="flex items-center gap-2 text-[11px] text-gray-400">
+      <span>إدارة المتجر</span>
+      <Icon name="chevron" size={13} />
+      <span className="font-semibold text-[#85816d]">
+        المنتجات
+      </span>
+    </div>
 
-          <h1 className="mt-3 text-2xl font-black tracking-tight">
-            المنتجات
-          </h1>
+    <h1 className="mt-3 text-2xl font-black tracking-tight">
+      المنتجات
+    </h1>
 
-          <p className="mt-2 text-xs text-gray-400">
-            إدارة منتجات المتجر ومتابعة الأسعار والمخزون.
-          </p>
-        </div>
+    <p className="mt-2 text-xs text-gray-400">
+      إدارة منتجات المتجر ومتابعة الأسعار والمخزون.
+    </p>
+  </div>
 
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#252720] px-5 text-xs font-bold text-white shadow-sm transition hover:bg-[#3a3c33]"
-        >
-          <Icon name="plus" size={17} />
-          إضافة منتج جديد
-        </button>
-      </div>
+  <div className="flex items-center gap-2">
+    <Link
+      href="/admin/categories"
+      className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#e9e6dd] bg-white px-4 text-xs font-bold text-[#252720] transition hover:bg-[#faf9f6]"
+    >
+      <Tags size={18} />
+      التصنيفات
+    </Link>
+
+    <button
+      type="button"
+      onClick={openCreateModal}
+      className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#252720] px-5 text-xs font-bold text-white shadow-sm transition hover:bg-[#3a3c33]"
+    >
+      <Icon name="plus" size={17} />
+      إضافة منتج جديد
+    </button>
+  </div>
+</div>
 
       {/* Alerts */}
       {error && (

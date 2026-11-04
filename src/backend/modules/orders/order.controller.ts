@@ -9,18 +9,20 @@ import {
 } from "../../utils/http";
 
 import {
+  createOrder,	
   getOrders,
   getOrderDetails,
   changeOrderStatus,
   updateOrderCustomerInfo,
   addItemToOrder,
-  changeOrderItemQuantity,
   removeItemFromOrder,
   getOrderStats,
   updateOrderDeliveryInfo,
+  updateOrderItem
 } from "./order.service";
 
 import {
+  createOrderSchema,
   orderIdSchema,
   orderItemParamsSchema,
   orderListQuerySchema,
@@ -75,6 +77,34 @@ type OrderItemRouteContext = {
     itemId: string;
   }>;
 };
+
+/* =========================================================
+   POST /api/orders
+========================================================= */
+
+export async function createOrderController(
+  request: NextRequest
+) {
+  try {
+    const body = validate(
+      createOrderSchema,
+      await readJsonBody(request)
+    );
+
+    const result = await createOrder(body);
+
+return successResponse(
+  {
+    message: "Order created successfully.",
+    ...result,
+  },
+  201
+);
+  } catch (error) {
+	  console.error("error = ",error);
+    return getErrorResponse(error);
+  }
+}
 
 /* =========================================================
    GET /api/admin/orders
@@ -251,10 +281,10 @@ export async function updateOrderItemController(
       await readJsonBody(request)
     );
 
-    const result = await changeOrderItemQuantity(
+    const result = await updateOrderItem(
       params.id,
       params.itemId,
-      body.quantity
+      body
     );
 
     return successResponse({

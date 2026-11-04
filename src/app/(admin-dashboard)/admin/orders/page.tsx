@@ -1,5 +1,10 @@
-
 "use client";
+
+import { OrderDetailsModal } from "@/app/components/admin/orders/order-details-modal";
+import type {
+  Order,
+  OrderStatus,
+} from "@/app/components/admin/orders/order-details-modal";
 
 import {
   useCallback,
@@ -7,7 +12,9 @@ import {
   useMemo,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
+
 import {
   Search,
   RefreshCw,
@@ -15,11 +22,9 @@ import {
   ChevronRight,
   Eye,
   X,
-  Package,
   Truck,
   CalendarDays,
   UserRound,
-  Phone,
   MapPin,
   Clock3,
   CheckCircle2,
@@ -27,27 +32,14 @@ import {
   LoaderCircle,
   SlidersHorizontal,
   ShoppingBag,
-  Banknote,
   ArrowUpDown,
   RotateCcw,
-  Plus,
-  Minus,
-  Trash2,
   Save,
 } from "lucide-react";
 
 /* -------------------------------------------------------------------------- */
 /*                                    Types                                   */
 /* -------------------------------------------------------------------------- */
-
-type OrderStatus =
-  | "PENDING"
-  | "CONFIRMED"
-  | "PROCESSING"
-  | "SHIPPED"
-  | "DELIVERED"
-  | "CANCELLED"
-  | "RETURNED";
 
 type DeliveryMethod = "HOME" | "OFFICE";
 
@@ -56,45 +48,6 @@ type SortOption =
   | "oldest"
   | "total_asc"
   | "total_desc";
-
-type OrderItem = {
-  id: string;
-  order_id: string;
-  product_id: string;
-  variant_id: string | null;
-  product_name: string;
-  variant_name?: string | null;
-  sku?: string | null;
-  quantity: number;
-  unit_price: number | string;
-  total?: number | string;
-};
-
-type Order = {
-  id: string;
-  order_number: string;
-  customer_first_name: string;
-  customer_last_name: string;
-  customer_phone: string;
-  wilaya_id: string;
-  wilaya_name?: string | null;
-  commune_id: string;
-  commune_name?: string | null;
-  delivery_company_id?: string | null;
-  delivery_company_name?: string | null;
-  delivery_method: DeliveryMethod;
-  delivery_office_id?: string | null;
-  delivery_office_name?: string | null;
-  delivery_address?: string | null;
-  delivery_fee: number | string;
-  subtotal: number | string;
-  total_amount: number | string;
-  status: OrderStatus;
-  notes?: string | null;
-  created_at: string;
-  updated_at?: string;
-  items?: OrderItem[];
-};
 
 type OrderStats = {
   total_orders?: number;
@@ -106,6 +59,7 @@ type OrderStats = {
   cancelled_orders?: number;
   returned_orders?: number;
   total_revenue?: number | string;
+  delivered_revenue?: number | string;
 };
 
 type Pagination = {
@@ -201,6 +155,9 @@ const STATUS_STYLES: Record<
   },
 };
 
+const inputClass =
+  "w-full rounded-xl border border-[#e5e2d9] bg-white px-3.5 py-3 text-sm text-[#252720] outline-none transition placeholder:text-[#aaa79c] focus:border-[#85816d] focus:ring-4 focus:ring-[#85816d]/10 disabled:cursor-not-allowed disabled:bg-gray-50";
+
 /* -------------------------------------------------------------------------- */
 /*                                  Utilities                                 */
 /* -------------------------------------------------------------------------- */
@@ -249,9 +206,7 @@ async function apiRequest<T>(
   const response = await fetch(url, {
     ...init,
     headers: {
-      ...(init?.body
-        ? { "Content-Type": "application/json" }
-        : {}),
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...init?.headers,
     },
     credentials: "same-origin",
@@ -319,6 +274,29 @@ function getQueryString(
   }
 
   return params.toString();
+}
+
+function normalizeOrderDetails(result: unknown): Order {
+  if (!result || typeof result !== "object") {
+    throw new Error("استجابة تفاصيل الطلب غير صالحة.");
+  }
+
+  const payload = result as {
+    order?: Order;
+    data?: Order | { order?: Order };
+  };
+
+  if (payload.order) return payload.order;
+
+  if (payload.data && typeof payload.data === "object") {
+    if ("order" in payload.data && payload.data.order) {
+      return payload.data.order;
+    }
+
+    return payload.data as Order;
+  }
+
+  return result as Order;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -389,9 +367,7 @@ function EmptyState({
         <ShoppingBag className="h-7 w-7" />
       </div>
 
-      <h3 className="mt-5 text-base font-bold text-[#252720]">
-        {title}
-      </h3>
+      <h3 className="mt-5 text-base font-bold text-[#252720]">{title}</h3>
 
       <p className="mt-2 max-w-sm text-sm leading-6 text-[#85816d]">
         {description}
@@ -405,33 +381,26 @@ function Field({
   children,
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <label className="block space-y-2">
-      <span className="text-sm font-medium text-[#45463f]">
-        {label}
-      </span>
+      <span className="text-sm font-medium text-[#45463f]">{label}</span>
       {children}
     </label>
   );
 }
-
-const inputClass =
-  "w-full rounded-xl border border-[#e5e2d9] bg-white px-3.5 py-3 text-sm text-[#252720] outline-none transition placeholder:text-[#aaa79c] focus:border-[#85816d] focus:ring-4 focus:ring-[#85816d]/10 disabled:cursor-not-allowed disabled:bg-gray-50";
 
 function Modal({
   title,
   subtitle,
   onClose,
   children,
-  wide = false,
 }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
-  children: React.ReactNode;
-  wide?: boolean;
+  children: ReactNode;
 }) {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -445,7 +414,7 @@ function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -453,20 +422,14 @@ function Modal({
       <section
         role="dialog"
         aria-modal="true"
-        className={`max-h-[90vh] w-full overflow-hidden rounded-2xl bg-white shadow-2xl ${
-          wide ? "max-w-4xl" : "max-w-xl"
-        }`}
+        className="max-h-[90vh] w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl"
       >
         <header className="flex items-start justify-between gap-4 border-b border-[#eeeae1] px-6 py-5">
           <div>
-            <h2 className="text-lg font-bold text-[#252720]">
-              {title}
-            </h2>
+            <h2 className="text-lg font-bold text-[#252720]">{title}</h2>
 
             {subtitle && (
-              <p className="mt-1 text-sm text-[#85816d]">
-                {subtitle}
-              </p>
+              <p className="mt-1 text-sm text-[#85816d]">{subtitle}</p>
             )}
           </div>
 
@@ -494,6 +457,7 @@ function Modal({
 
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
+
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
     limit: PAGE_SIZE,
@@ -514,6 +478,7 @@ export default function AdminOrdersPage() {
   const [detailsLoading, setDetailsLoading] = useState(false);
 
   const [customerOrder, setCustomerOrder] = useState<Order | null>(null);
+
   const [customerForm, setCustomerForm] = useState<CustomerForm>({
     customer_first_name: "",
     customer_last_name: "",
@@ -524,6 +489,8 @@ export default function AdminOrdersPage() {
   const [newStatus, setNewStatus] = useState<OrderStatus>("PENDING");
 
   const [saving, setSaving] = useState(false);
+  const [savingItems, setSavingItems] = useState(false);
+
   const [notice, setNotice] = useState<{
     type: "success" | "error";
     text: string;
@@ -543,6 +510,10 @@ export default function AdminOrdersPage() {
     ].filter(Boolean).length;
   }, [filters]);
 
+  /* ------------------------------------------------------------------------ */
+  /*                              Load Orders                                 */
+  /* ------------------------------------------------------------------------ */
+
   const loadOrders = useCallback(
     async (showSpinner = true) => {
       if (showSpinner) setLoading(true);
@@ -554,11 +525,6 @@ export default function AdminOrdersPage() {
           `/api/admin/orders?${getQueryString(filters, pagination.page)}`,
         );
 
-        /*
-         * Adapt the common pagination response shapes.
-         * If your controller returns a different structure, adjust this
-         * extraction to match order.controller.ts.
-         */
         const payload = result as {
           orders?: Order[];
           items?: Order[];
@@ -586,6 +552,7 @@ export default function AdminOrdersPage() {
         const total = Number(meta.total ?? payload.total ?? rows.length);
         const page = Number(meta.page ?? payload.page ?? pagination.page);
         const limit = Number(meta.limit ?? payload.limit ?? PAGE_SIZE);
+
         const totalPages = Number(
           meta.totalPages ??
             payload.totalPages ??
@@ -593,6 +560,7 @@ export default function AdminOrdersPage() {
         );
 
         setOrders(rows);
+
         setPagination({
           page,
           limit,
@@ -609,6 +577,10 @@ export default function AdminOrdersPage() {
     },
     [filters, pagination.page],
   );
+
+  /* ------------------------------------------------------------------------ */
+  /*                              Load Statistics                             */
+  /* ------------------------------------------------------------------------ */
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -627,10 +599,6 @@ export default function AdminOrdersPage() {
         (payload.stats ?? payload.data ?? result) as OrderStats,
       );
     } catch {
-      /*
-       * Statistics are supplementary. A statistics failure should not
-       * prevent the orders table from working.
-       */
       setStats({});
     } finally {
       setStatsLoading(false);
@@ -652,6 +620,10 @@ export default function AdminOrdersPage() {
 
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  /* ------------------------------------------------------------------------ */
+  /*                                  Filters                                 */
+  /* ------------------------------------------------------------------------ */
 
   function updateFilter<K extends keyof OrderFilters>(
     key: K,
@@ -676,6 +648,7 @@ export default function AdminOrdersPage() {
   function resetFilters() {
     setFilters(INITIAL_FILTERS);
     setSearchInput("");
+
     setPagination((current) => ({
       ...current,
       page: 1,
@@ -687,6 +660,10 @@ export default function AdminOrdersPage() {
     await Promise.all([loadOrders(false), loadStats()]);
   }
 
+  /* ------------------------------------------------------------------------ */
+  /*                              Order Details                               */
+  /* ------------------------------------------------------------------------ */
+
   async function openOrder(order: Order) {
     setSelectedOrder(order);
     setDetailsLoading(true);
@@ -696,12 +673,7 @@ export default function AdminOrdersPage() {
         `/api/admin/orders/${order.id}`,
       );
 
-      const payload = result as {
-        order?: Order;
-        data?: Order;
-      };
-
-      setSelectedOrder(payload.order ?? payload.data ?? (result as Order));
+      setSelectedOrder(normalizeOrderDetails(result));
     } catch (err) {
       setNotice({
         type: "error",
@@ -712,8 +684,170 @@ export default function AdminOrdersPage() {
     }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /*                        Refresh After Item Mutation                       */
+  /* ------------------------------------------------------------------------ */
+
+  async function refreshOrderAfterItemMutation(orderId: string) {
+    await Promise.all([
+      loadOrders(false),
+      loadStats(),
+    ]);
+
+    const result = await apiRequest<unknown>(
+      `/api/admin/orders/${orderId}`,
+    );
+
+    const refreshedOrder = normalizeOrderDetails(result);
+
+    setSelectedOrder(refreshedOrder);
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*                              Add Order Item                              */
+  /* ------------------------------------------------------------------------ */
+
+  async function addOrderItem(input: {
+    product_id: string;
+    product_variant_id: string | null;
+    quantity: number;
+  }) {
+    if (!selectedOrder || savingItems) return;
+
+    setSavingItems(true);
+
+    try {
+      await apiRequest(
+        `/api/admin/orders/${selectedOrder.id}/items`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            product_id: input.product_id,
+            product_variant_id: input.product_variant_id,
+            quantity: input.quantity,
+          }),
+        },
+      );
+
+      await refreshOrderAfterItemMutation(selectedOrder.id);
+
+      setNotice({
+        type: "success",
+        text: "تمت إضافة المنتج إلى الطلب وتحديث الإجماليات والمخزون.",
+      });
+    } catch (err) {
+      const message = getErrorMessage(err);
+
+      setNotice({
+        type: "error",
+        text: message,
+      });
+
+      throw new Error(message);
+    } finally {
+      setSavingItems(false);
+    }
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*                         Update Order Item Quantity                       */
+  /* ------------------------------------------------------------------------ */
+
+async function updateOrderItem(
+  itemId: string,
+  input: {
+    product_id: string;
+    product_variant_id: string | null;
+    quantity: number;
+  },
+) {
+  if (!selectedOrder || savingItems) return;
+
+  if (!Number.isSafeInteger(input.quantity) || input.quantity < 1) {
+    throw new Error("يرجى إدخال كمية صحيحة أكبر من صفر.");
+  }
+
+  setSavingItems(true);
+
+  try {
+    await apiRequest(
+      `/api/admin/orders/${selectedOrder.id}/items/${itemId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      },
+    );
+
+    await refreshOrderAfterItemMutation(selectedOrder.id);
+
+    setNotice({
+      type: "success",
+      text: "تم تحديث المنتج وخصائصه وكميته بنجاح.",
+    });
+  } catch (err) {
+    const message = getErrorMessage(err);
+
+    setNotice({
+      type: "error",
+      text: message,
+    });
+
+    throw new Error(message);
+  } finally {
+    setSavingItems(false);
+  }
+}
+
+  /* ------------------------------------------------------------------------ */
+  /*                              Remove Order Item                           */
+  /* ------------------------------------------------------------------------ */
+
+  async function removeOrderItem(itemId: string) {
+    if (!selectedOrder || savingItems) return;
+
+    if ((selectedOrder.items?.length ?? 0) <= 1) {
+      throw new Error(
+        "لا يمكن حذف آخر منتج من الطلب. يجب أن يحتوي الطلب على منتج واحد على الأقل.",
+      );
+    }
+
+    setSavingItems(true);
+
+    try {
+      await apiRequest(
+        `/api/admin/orders/${selectedOrder.id}/items/${itemId}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      await refreshOrderAfterItemMutation(selectedOrder.id);
+
+      setNotice({
+        type: "success",
+        text: "تم حذف المنتج وإرجاع الكمية إلى المخزون وتحديث الإجماليات.",
+      });
+    } catch (err) {
+      const message = getErrorMessage(err);
+
+      setNotice({
+        type: "error",
+        text: message,
+      });
+
+      throw new Error(message);
+    } finally {
+      setSavingItems(false);
+    }
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*                            Customer Information                          */
+  /* ------------------------------------------------------------------------ */
+
   function openCustomerEditor(order: Order) {
     setCustomerOrder(order);
+
     setCustomerForm({
       customer_first_name: order.customer_first_name,
       customer_last_name: order.customer_last_name,
@@ -724,7 +858,7 @@ export default function AdminOrdersPage() {
   async function saveCustomer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!customerOrder) return;
+    if (!customerOrder || saving) return;
 
     setSaving(true);
 
@@ -743,6 +877,7 @@ export default function AdminOrdersPage() {
       });
 
       setCustomerOrder(null);
+
       await loadOrders(false);
 
       if (selectedOrder?.id === customerOrder.id) {
@@ -758,6 +893,10 @@ export default function AdminOrdersPage() {
     }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /*                               Order Status                               */
+  /* ------------------------------------------------------------------------ */
+
   function openStatusEditor(order: Order) {
     setStatusOrder(order);
     setNewStatus(order.status);
@@ -766,7 +905,7 @@ export default function AdminOrdersPage() {
   async function saveStatus(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!statusOrder) return;
+    if (!statusOrder || saving) return;
 
     setSaving(true);
 
@@ -786,7 +925,10 @@ export default function AdminOrdersPage() {
 
       setStatusOrder(null);
 
-      await Promise.all([loadOrders(false), loadStats()]);
+      await Promise.all([
+        loadOrders(false),
+        loadStats(),
+      ]);
 
       if (selectedOrder?.id === statusOrder.id) {
         await openOrder(statusOrder);
@@ -801,8 +943,15 @@ export default function AdminOrdersPage() {
     }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /*                                    UI                                    */
+  /* ------------------------------------------------------------------------ */
+
   return (
-    <main dir="rtl" className="min-h-screen bg-[#faf9f6] p-4 sm:p-6 lg:p-8">
+    <main
+      dir="rtl"
+      className="min-h-screen bg-[#faf9f6] p-4 sm:p-6 lg:p-8"
+    >
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Page heading */}
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
@@ -852,7 +1001,7 @@ export default function AdminOrdersPage() {
             tone="bg-blue-50 text-blue-700"
             loading={statsLoading}
           />
-		  
+
           <StatCard
             title="طلبات قيد التجهيز"
             value={Number(stats.processing_orders ?? 0).toLocaleString("ar-DZ")}
@@ -862,22 +1011,20 @@ export default function AdminOrdersPage() {
           />
 
           <StatCard
-            title="طلبات جاهزة للشحن"
-            value={Number(stats.delivered_orders)}
-            icon={CheckCircle2}
+            title="طلبات تم شحنها"
+            value={Number(stats.shipped_orders ?? 0).toLocaleString("ar-DZ")}
+            icon={Truck}
             tone="bg-indigo-50 text-indigo-700"
             loading={statsLoading}
           />
         </section>
 
-        {/* Table panel */}
+        {/* Orders table */}
         <section className="overflow-hidden rounded-2xl border border-[#e9e6dd] bg-white">
           {/* Toolbar */}
           <div className="flex flex-col gap-4 border-b border-[#eeeae1] p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="font-bold text-[#252720]">
-                جميع الطلبات
-              </h2>
+              <h2 className="font-bold text-[#252720]">جميع الطلبات</h2>
 
               <p className="mt-1 text-sm text-[#85816d]">
                 {pagination.total.toLocaleString("ar-DZ")} طلب
@@ -1127,7 +1274,7 @@ export default function AdminOrdersPage() {
 
                       <td className="px-5 py-4">
                         <span className="font-bold text-[#252720]">
-                          {formatMoney(order.total)}
+                          {formatMoney(order.total_amount)}
                         </span>
                       </td>
 
@@ -1191,10 +1338,15 @@ export default function AdminOrdersPage() {
             <p className="text-sm text-[#85816d]">
               {pagination.total === 0
                 ? "لا توجد نتائج"
-                : `عرض ${((pagination.page - 1) * pagination.limit + 1).toLocaleString("ar-DZ")} إلى ${Math.min(
+                : `عرض ${(
+                    (pagination.page - 1) * pagination.limit +
+                    1
+                  ).toLocaleString("ar-DZ")} إلى ${Math.min(
                     pagination.page * pagination.limit,
                     pagination.total,
-                  ).toLocaleString("ar-DZ")} من ${pagination.total.toLocaleString("ar-DZ")} طلب`}
+                  ).toLocaleString("ar-DZ")} من ${pagination.total.toLocaleString(
+                    "ar-DZ",
+                  )} طلب`}
             </p>
 
             <div className="flex items-center gap-2">
@@ -1424,247 +1576,22 @@ export default function AdminOrdersPage() {
 
       {/* Order details */}
       {selectedOrder && (
-        <Modal
-          title={`تفاصيل الطلب #${selectedOrder.order_number}`}
-          subtitle={`تاريخ الطلب: ${formatDate(selectedOrder.created_at)}`}
-          wide
-          onClose={() => setSelectedOrder(null)}
-        >
-          {detailsLoading ? (
-            <div className="flex flex-col items-center py-16">
-              <LoaderCircle className="h-8 w-8 animate-spin text-[#85816d]" />
-              <p className="mt-4 text-sm text-[#85816d]">
-                جارٍ تحميل تفاصيل الطلب...
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Order header */}
-              <div className="flex flex-col justify-between gap-4 rounded-2xl bg-[#faf9f6] p-5 sm:flex-row sm:items-center">
-                <div>
-                  <p className="text-sm text-[#85816d]">
-                    الحالة الحالية
-                  </p>
-
-                  <div className="mt-2">
-                    <StatusBadge status={selectedOrder.status} />
-                  </div>
-                </div>
-
-                <div className="sm:text-left">
-                  <p className="text-sm text-[#85816d]">المبلغ الإجمالي</p>
-
-                  <p className="mt-1 text-2xl font-bold text-[#252720]">
-                    {formatMoney(selectedOrder.total_amount)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Customer and delivery */}
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <section className="rounded-2xl border border-[#e9e6dd] p-5">
-                  <div className="flex items-center gap-2">
-                    <UserRound className="h-5 w-5 text-[#85816d]" />
-                    <h3 className="font-bold text-[#252720]">
-                      بيانات العميل
-                    </h3>
-                  </div>
-
-                  <p className="mt-5 font-semibold text-[#252720]">
-                    {selectedOrder.customer_first_name}{" "}
-                    {selectedOrder.customer_last_name}
-                  </p>
-
-                  <p
-                    dir="ltr"
-                    className="mt-3 flex items-center justify-end gap-2 text-sm text-[#85816d]"
-                  >
-                    {selectedOrder.customer_phone}
-                    <Phone className="h-4 w-4" />
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const order = selectedOrder;
-                      setSelectedOrder(null);
-                      openCustomerEditor(order);
-                    }}
-                    className="mt-4 text-sm font-semibold text-[#69654f] hover:underline"
-                  >
-                    تعديل بيانات العميل
-                  </button>
-                </section>
-
-                <section className="rounded-2xl border border-[#e9e6dd] p-5">
-                  <div className="flex items-center gap-2">
-                    <Truck className="h-5 w-5 text-[#85816d]" />
-                    <h3 className="font-bold text-[#252720]">
-                      معلومات التوصيل
-                    </h3>
-                  </div>
-
-                  <div className="mt-5 space-y-3 text-sm">
-                    <div className="flex justify-between gap-3">
-                      <span className="text-[#85816d]">الطريقة</span>
-                      <span className="font-medium text-[#252720]">
-                        {selectedOrder.delivery_method === "HOME"
-                          ? "توصيل للمنزل"
-                          : "توصيل للمكتب"}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-3">
-                      <span className="text-[#85816d]">الولاية</span>
-                      <span className="font-medium text-[#252720]">
-                        {selectedOrder.wilaya_name || "—"}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-3">
-                      <span className="text-[#85816d]">البلدية</span>
-                      <span className="font-medium text-[#252720]">
-                        {selectedOrder.commune_name || "—"}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-3">
-                      <span className="text-[#85816d]">شركة التوصيل</span>
-                      <span className="font-medium text-[#252720]">
-                        {selectedOrder.delivery_company_name || "—"}
-                      </span>
-                    </div>
-
-                    {selectedOrder.delivery_method === "OFFICE" && (
-                      <div className="flex justify-between gap-3">
-                        <span className="text-[#85816d]">مكتب التوصيل</span>
-                        <span className="font-medium text-[#252720]">
-                          {selectedOrder.delivery_office_name || "—"}
-                        </span>
-                      </div>
-                    )}
-
-                    {selectedOrder.delivery_address && (
-                      <div className="border-t border-[#eeeae1] pt-3">
-                        <p className="text-[#85816d]">العنوان</p>
-                        <p className="mt-1 leading-6 text-[#252720]">
-                          {selectedOrder.delivery_address}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </section>
-              </div>
-
-              {/* Items */}
-              <section className="overflow-hidden rounded-2xl border border-[#e9e6dd]">
-                <div className="flex items-center gap-2 border-b border-[#eeeae1] p-4">
-                  <Package className="h-5 w-5 text-[#85816d]" />
-                  <h3 className="font-bold text-[#252720]">
-                    منتجات الطلب
-                  </h3>
-                </div>
-
-                {!selectedOrder.items?.length ? (
-                  <EmptyState
-                    title="لا توجد تفاصيل للمنتجات"
-                    description="لم تُرجع استجابة تفاصيل الطلب قائمة المنتجات."
-                  />
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[520px] text-right">
-                      <thead className="bg-[#faf9f6] text-xs text-[#85816d]">
-                        <tr>
-                          <th className="px-4 py-3">المنتج</th>
-                          <th className="px-4 py-3">السعر</th>
-                          <th className="px-4 py-3">الكمية</th>
-                          <th className="px-4 py-3">الإجمالي</th>
-                        </tr>
-                      </thead>
-
-                      <tbody className="divide-y divide-[#f0eee7]">
-                        {selectedOrder.items.map((item) => (
-                          <tr key={item.id}>
-                            <td className="px-4 py-4">
-                              <p className="font-semibold text-[#252720]">
-                                {item.product_name}
-                              </p>
-
-                              {item.variant_name && (
-                                <p className="mt-1 text-xs text-[#85816d]">
-                                  {item.variant_name}
-                                </p>
-                              )}
-
-                              {item.sku && (
-                                <p className="mt-1 text-xs text-[#aaa79c]">
-                                  SKU: {item.sku}
-                                </p>
-                              )}
-                            </td>
-
-                            <td className="px-4 py-4 text-sm text-[#45463f]">
-                              {formatMoney(item.unit_price)}
-                            </td>
-
-                            <td className="px-4 py-4 text-sm text-[#45463f]">
-                              {item.quantity}
-                            </td>
-
-                            <td className="px-4 py-4 text-sm font-bold text-[#252720]">
-                              {formatMoney(
-                                item.total ??
-                                  Number(item.unit_price) * item.quantity,
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-
-              {/* Totals */}
-              <section className="mr-auto max-w-sm space-y-3 rounded-2xl border border-[#e9e6dd] p-5">
-                <div className="flex justify-between gap-4 text-sm">
-                  <span className="text-[#85816d]">المجموع الفرعي</span>
-                  <span className="font-medium text-[#252720]">
-                    {formatMoney(selectedOrder.subtotal)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between gap-4 text-sm">
-                  <span className="text-[#85816d]">تكلفة التوصيل</span>
-                  <span className="font-medium text-[#252720]">
-                    {formatMoney(selectedOrder.delivery_fee)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between gap-4 border-t border-[#eeeae1] pt-3">
-                  <span className="font-bold text-[#252720]">
-                    الإجمالي النهائي
-                  </span>
-                  <span className="text-lg font-bold text-[#252720]">
-                    {formatMoney(selectedOrder.total_amount)}
-                  </span>
-                </div>
-              </section>
-
-              {/* Actions */}
-              <div className="flex flex-wrap justify-end gap-3 border-t border-[#eeeae1] pt-5">
-                <button
-                  type="button"
-                  onClick={() => openStatusEditor(selectedOrder)}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#252720] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#45463f]"
-                >
-                  <ArrowUpDown className="h-4 w-4" />
-                  تغيير الحالة
-                </button>
-              </div>
-            </div>
-          )}
-        </Modal>
+        <OrderDetailsModal
+          order={selectedOrder}
+          loading={detailsLoading}
+          savingItems={savingItems}
+          onClose={() => {
+            if (!savingItems) setSelectedOrder(null);
+          }}
+          onEditCustomer={(order) => {
+            setSelectedOrder(null);
+            openCustomerEditor(order);
+          }}
+          onChangeStatus={openStatusEditor}
+          onAddItem={addOrderItem}
+          onUpdateItem={updateOrderItem}
+          onRemoveItem={removeOrderItem}
+        />
       )}
     </main>
   );
