@@ -5,6 +5,10 @@ import db from "../../database/knex";
 import type { UpdateOrderItemPayload } from "./order.validation";
 
 import {
+  notifyNewOrder,
+} from "../admin-notifications/adminNotification.service";
+
+import {
   findActiveProductForOrder,
   findActiveVariantForOrder,
   decreaseProductStock,
@@ -365,6 +369,18 @@ export async function createOrder(input: CreateOrderInput) {
         trx
       );
     }
+	
+await notifyNewOrder({
+  order_id: order.id,
+  order_number: order.order_number,
+
+  customer_first_name: order.customer_first_name,
+  customer_last_name: order.customer_last_name,
+  customer_phone: order.customer_phone,
+
+  total: Number(order.total_amount),
+  currency: "DZD",
+});	
 
     // 11. إرجاع ملخص الطلب
     return {
