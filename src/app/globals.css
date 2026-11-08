@@ -71,3 +71,231 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+/* ========================================
+   RIMOVA Loading Animations
+   ======================================== */
+
+/* Background glow */
+
+@keyframes rimova-glow {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+
+  50% {
+    transform: scale(1.15);
+    opacity: 0.65;
+  }
+}
+
+@keyframes rimova-glow-reverse {
+  0%, 100% {
+    transform: scale(1.1);
+    opacity: 0.3;
+  }
+
+  50% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+}
+
+.rimova-glow-one {
+  animation: rimova-glow 9s ease-in-out infinite;
+}
+
+.rimova-glow-two {
+  animation: rimova-glow-reverse 11s ease-in-out infinite;
+}
+
+/* Brand entrance */
+
+@keyframes rimova-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rimova-fade-up {
+  animation: rimova-fade-up 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Brand underline */
+
+@keyframes rimova-line {
+  from {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+.rimova-line {
+  animation: rimova-line 0.8s ease 0.15s both;
+}
+
+/* Rotating orbits */
+
+@keyframes rimova-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes rimova-orbit-reverse {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+.rimova-orbit {
+  animation: rimova-orbit 18s linear infinite;
+}
+
+.rimova-orbit-reverse {
+  animation: rimova-orbit-reverse 26s linear infinite;
+}
+
+/* Inner ring */
+
+@keyframes rimova-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+.rimova-pulse {
+  animation: rimova-pulse 3.5s ease-in-out infinite;
+}
+
+/* Floating emblem */
+
+@keyframes rimova-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.rimova-float {
+  animation: rimova-float 3.5s ease-in-out infinite;
+}
+
+/* Rotating symbol */
+
+@keyframes rimova-symbol {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(180deg);
+  }
+}
+
+.rimova-symbol {
+  animation: rimova-symbol 12s ease-in-out infinite alternate;
+}
+
+/* Loading message */
+
+.rimova-message {
+  animation: rimova-fade-up 0.7s ease 0.3s both;
+}
+
+/* Progress bar */
+
+@keyframes rimova-progress {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-430%);
+  }
+}
+
+.rimova-progress {
+  animation: rimova-progress 1.8s ease-in-out infinite;
+}
+
+/* Decorative dots */
+
+@keyframes rimova-dot {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.rimova-dot {
+  animation: rimova-dot 1.5s ease-in-out infinite;
+}
+
+.rimova-dot:nth-child(2) {
+  animation-delay: 0.22s;
+}
+
+.rimova-dot:nth-child(3) {
+  animation-delay: 0.44s;
+}
+
+/* Footer */
+
+.rimova-footer {
+  animation: rimova-fade-up 1s ease 0.6s both;
+}
+
+/* Accessibility */
+
+@media (prefers-reduced-motion: reduce) {
+  .rimova-glow-one,
+  .rimova-glow-two,
+  .rimova-fade-up,
+  .rimova-line,
+  .rimova-orbit,
+  .rimova-orbit-reverse,
+  .rimova-pulse,
+  .rimova-float,
+  .rimova-symbol,
+  .rimova-message,
+  .rimova-progress,
+  .rimova-dot,
+  .rimova-footer {
+    animation: none !important;
+  }
+}
+
+.rimova-orbit,
+.rimova-orbit-reverse,
+.rimova-float,
+.rimova-progress {
+  will-change: transform;
+}

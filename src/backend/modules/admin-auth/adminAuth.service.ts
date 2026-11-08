@@ -21,8 +21,8 @@ import type {
 export class AdminAuthError extends Error {
   constructor(
     message: string,
-    public readonly statusCode: number = 401,
-    public readonly code: string = "ADMIN_AUTH_ERROR",
+    public readonly statusCode = 401,
+    public readonly code = "ADMIN_AUTH_ERROR",
   ) {
     super(message);
     this.name = "AdminAuthError";
@@ -44,7 +44,6 @@ export interface AdminLoginResult {
   admin: AdminPublicProfile;
   sessionToken: string;
   session: AdminSession;
-//  expiresAt: Date;
 }
 
 export interface AuthenticatedAdmin {
@@ -57,12 +56,53 @@ export interface AuthenticatedAdmin {
   };
 }
 
+export interface AdminListInput {
+  search?: string;
+  role?: AdminRole;
+  isActive?: boolean;
+  page: number;
+  limit: number;
+  sortBy?:
+    | "username"
+    | "email"
+    | "role"
+    | "created_at"
+    | "last_login_at";
+  sortOrder?: "asc" | "desc";
+}
+
+export interface AdminListResult {
+  admins: AdminPublicProfile[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface CreateAdminAccountInput {
+  username: string;
+  email: string;
+  password: string;
+  role?: AdminRole;
+}
+
+export interface UpdateAdminAccountInput {
+  username?: string;
+  email?: string;
+  role?: AdminRole;
+}
+
 /* -------------------------------------------------------------------------- */
 /*                               Configuration                                */
 /* -------------------------------------------------------------------------- */
 
 const NORMAL_SESSION_HOURS = 12;
 const REMEMBERED_SESSION_DAYS = 30;
+
+const MIN_PASSWORD_LENGTH = 12;
+const MAX_PASSWORD_LENGTH = 128;
 
 /* -------------------------------------------------------------------------- */
 /*                              Internal Helpers                              */
@@ -97,16 +137,99 @@ function createSessionExpiration(rememberMe: boolean): Date {
   return expiresAt;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                   Login                                    */
-/* -------------------------------------------------------------------------- */
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function normalizeUsername(username: string): string {
+  return username.trim();
+}
+
+function isDuplicateDatabaseError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ER_DUP_ENTRY"
+  );
+}
+
+async function ensureAdminExists(
+  adminUserId: string,
+): Promise<AdminUser> {
+  const admin =
+    await adminAuthRepository.findAdminById(adminUserId);
+
+  if (!admin) {
+    throw new AdminAuthError(
+      "Administrator not found.",
+      404,
+      "ADMIN_NOT_FOUND",
+    );
+  }
+
+  return admin;
+}
+
+async function ensureLastSuperAdminIsPreserved(
+  admin: AdminUser,
+  willRemainSuperAdmin: boolean,
+): Promise<void> {
+  if (admin.role !== "super_admin" || willRemainSuperAdmin) {
+    return;
+  }
+
+  if (!admin.is_active) {
+    return;
+  }
+
+  const activeSuperAdmins =
+    await adminAuthRepository.countAdmins({
+      role: "super_admin",
+      is_active: true,
+    });
+
+  if (activeSuperAdmins <= 1) {
+    throw new AdminAuthError(
+      "Cannot remove or disable the last active super administrator.",
+      409,
+      "LAST_SUPER_ADMIN",
+    );
+  }
+}
 
 /**
- * Authenticate an administrator and create a database-backed session.
- *
- * The raw session token is returned once so the controller can put it
- * in an HttpOnly cookie. Only its SHA-256 hash is stored in the database.
+ * Prevent the service from accepting invalid pagination values.
  */
+function normalizePagination(
+  page: number,
+  limit: number,
+): { page: number; limit: number; offset: number } {
+  if (
+    !Number.isInteger(page) ||
+    !Number.isInteger(limit) ||
+    page < 1 ||
+    limit < 1 ||
+    limit > 100
+  ) {
+    throw new AdminAuthError(
+      "Invalid pagination parameters.",
+      400,
+      "INVALID_PAGINATION",
+    );
+  }
+
+  return {
+    page,
+    limit,
+    offset: (page - 1) * limit,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                    Login                                   */
+/* -------------------------------------------------------------------------- */
+
 export async function loginAdmin(
   identifier: string,
   password: string,
@@ -127,7 +250,6 @@ export async function loginAdmin(
       normalizedIdentifier,
     );
 
-  // Use the same public error for a missing account and a wrong password.
   if (!admin) {
     throw new AdminAuthError(
       "Invalid email/username or password.",
@@ -161,48 +283,45 @@ export async function loginAdmin(
   const tokenHash = hashSessionToken(sessionToken);
   const expiresAt = createSessionExpiration(rememberMe);
 
-const session = await adminAuthRepository.createAdminSession({
-  admin_user_id: admin.id,
-  token_hash: tokenHash,
-  expires_at: expiresAt,
-});
+  const session = await adminAuthRepository.createAdminSession({
+    admin_user_id: admin.id,
+    token_hash: tokenHash,
+    expires_at: expiresAt,
+  });
 
-  await adminAuthRepository.updateAdminLastLogin(admin.id);
+  try {
+    const updated =
+      await adminAuthRepository.updateAdminLastLogin(admin.id);
 
-  // Fetch again so last_login_at reflects the successful login.
-  const updatedAdmin =
-    await adminAuthRepository.findAdminById(admin.id);
+    if (!updated) {
+      throw new Error("Failed to update last login.");
+    }
 
-  if (!updatedAdmin) {
-    // Avoid leaving an orphaned active session if the account disappeared.
+    const updatedAdmin =
+      await adminAuthRepository.findAdminById(admin.id);
+
+    if (!updatedAdmin) {
+      throw new Error("Administrator no longer exists.");
+    }
+
+    return {
+      admin: toPublicAdmin(updatedAdmin),
+      sessionToken,
+      session,
+    };
+  } catch (error) {
     await adminAuthRepository.revokeAdminSessionByTokenHash(
       tokenHash,
     );
 
-    throw new AdminAuthError(
-      "Unable to complete administrator login.",
-      500,
-      "ADMIN_LOGIN_FAILED",
-    );
+    throw error;
   }
-
-  return {
-    admin: toPublicAdmin(updatedAdmin),
-    sessionToken,
-    session,
-  };
 }
 
 /* -------------------------------------------------------------------------- */
 /*                              Session Validation                            */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Validate a raw token received from the session cookie.
- *
- * Returns null if the session is missing, expired, revoked,
- * or belongs to an inactive administrator.
- */
 export async function authenticateAdminSession(
   sessionToken: string | undefined | null,
 ): Promise<AuthenticatedAdmin | null> {
@@ -225,7 +344,6 @@ export async function authenticateAdminSession(
   }
 
   if (new Date(session.expires_at).getTime() <= Date.now()) {
-    // Expired sessions cannot be used, even if cleanup has not run.
     await adminAuthRepository.revokeAdminSession(
       session.session_id,
     );
@@ -234,7 +352,6 @@ export async function authenticateAdminSession(
   }
 
   if (!session.is_active) {
-    // Prevent continued use of this session after account deactivation.
     await adminAuthRepository.revokeAdminSession(
       session.session_id,
     );
@@ -242,9 +359,14 @@ export async function authenticateAdminSession(
     return null;
   }
 
-  await adminAuthRepository.updateAdminSessionLastSeen(
-    session.session_id,
-  );
+  const updated =
+    await adminAuthRepository.updateAdminSessionLastSeen(
+      session.session_id,
+    );
+
+  if (!updated) {
+    return null;
+  }
 
   return {
     admin: {
@@ -267,13 +389,9 @@ export async function authenticateAdminSession(
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                   Logout                                   */
+/*                                    Logout                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Revoke the current session.
- * The controller should also clear the browser cookie.
- */
 export async function logoutAdmin(
   sessionToken: string | undefined | null,
 ): Promise<void> {
@@ -293,19 +411,33 @@ export async function logoutAdmin(
 /* -------------------------------------------------------------------------- */
 
 /**
- * List active sessions for an administrator.
+ * Get all active sessions belonging to an administrator.
  */
 export async function getAdminActiveSessions(
   adminUserId: string,
 ): Promise<AdminSession[]> {
+  await ensureAdminExists(adminUserId);
+
   return adminAuthRepository.listActiveAdminSessions(
     adminUserId,
   );
 }
 
 /**
- * Revoke a specific session after checking ownership.
- * Prevents one administrator from revoking another administrator's session.
+ * Get all sessions, including revoked and expired sessions.
+ */
+export async function getAdminSessions(
+  adminUserId: string,
+): Promise<AdminSession[]> {
+  await ensureAdminExists(adminUserId);
+
+  return adminAuthRepository.listAdminSessions(
+    adminUserId,
+  );
+}
+
+/**
+ * Revoke one session after checking ownership.
  */
 export async function revokeAdminSession(
   adminUserId: string,
@@ -331,18 +463,39 @@ export async function revokeAdminSession(
 export async function revokeAllAdminSessions(
   adminUserId: string,
 ): Promise<number> {
+  await ensureAdminExists(adminUserId);
+
   return adminAuthRepository.revokeAllAdminSessions(
     adminUserId,
   );
 }
 
 /**
- * Revoke every session except the current one.
+ * Revoke all sessions except the current session.
  */
 export async function revokeOtherAdminSessions(
   adminUserId: string,
   currentSessionId: string,
 ): Promise<number> {
+  await ensureAdminExists(adminUserId);
+
+  const currentSession =
+    await adminAuthRepository.findAdminSessionById(
+      currentSessionId,
+    );
+
+  if (
+    !currentSession ||
+    currentSession.admin_user_id !== adminUserId ||
+    currentSession.revoked_at !== null
+  ) {
+    throw new AdminAuthError(
+      "Current session not found.",
+      404,
+      "CURRENT_SESSION_NOT_FOUND",
+    );
+  }
+
   return adminAuthRepository.revokeOtherAdminSessions(
     adminUserId,
     currentSessionId,
@@ -353,10 +506,6 @@ export async function revokeOtherAdminSessions(
 /*                              Password Management                           */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Change an administrator's password.
- * All sessions are revoked after a successful password change.
- */
 export async function changeAdminPassword(
   adminUserId: string,
   currentPassword: string,
@@ -370,24 +519,26 @@ export async function changeAdminPassword(
     );
   }
 
-  if (newPassword.length < 12) {
+  if (
+    newPassword.length < MIN_PASSWORD_LENGTH ||
+    newPassword.length > MAX_PASSWORD_LENGTH
+  ) {
     throw new AdminAuthError(
-      "The new password must contain at least 12 characters.",
+      `The new password must contain between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
       400,
       "WEAK_PASSWORD",
     );
   }
 
-  const admin =
-    await adminAuthRepository.findAdminById(adminUserId);
-
-  if (!admin) {
+  if (currentPassword === newPassword) {
     throw new AdminAuthError(
-      "Administrator not found.",
-      404,
-      "ADMIN_NOT_FOUND",
+      "New password must differ from current password.",
+      400,
+      "PASSWORD_UNCHANGED",
     );
   }
+
+  const admin = await ensureAdminExists(adminUserId);
 
   if (!admin.is_active) {
     throw new AdminAuthError(
@@ -426,31 +577,21 @@ export async function changeAdminPassword(
     );
   }
 
-  // Require login again on every device.
+  // Security: invalidate every session after a password change.
   await adminAuthRepository.revokeAllAdminSessions(
     adminUserId,
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/*                             Administrator Management                       */
+/*                         Administrator Creation                             */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Create an administrator account.
- * Password hashing stays in utils; database operations stay in repository.
- *
- * Authorization must be enforced by middleware/controller before this
- * function is called, for example allowing only super_admin.
- */
-export async function createAdminAccount(input: {
-  username: string;
-  email: string;
-  password: string;
-  role?: AdminRole;
-}): Promise<AdminPublicProfile> {
-  const username = input.username.trim();
-  const email = input.email.trim();
+export async function createAdminAccount(
+  input: CreateAdminAccountInput,
+): Promise<AdminPublicProfile> {
+  const username = normalizeUsername(input.username);
+  const email = normalizeEmail(input.email);
 
   if (!username || !email || !input.password) {
     throw new AdminAuthError(
@@ -460,9 +601,12 @@ export async function createAdminAccount(input: {
     );
   }
 
-  if (input.password.length < 6) {
+  if (
+    input.password.length < 6 ||
+    input.password.length > MAX_PASSWORD_LENGTH
+  ) {
     throw new AdminAuthError(
-      "The password must contain at least 6 characters.",
+      "Password must contain between 6 and 128 characters.",
       400,
       "WEAK_PASSWORD",
     );
@@ -503,11 +647,7 @@ export async function createAdminAccount(input: {
 
     return toPublicAdmin(admin);
   } catch (error) {
-    // Database unique constraints remain the final protection against
-    // simultaneous requests creating duplicate email addresses/usernames.
-    const dbError = error as { code?: string };
-
-    if (dbError.code === "ER_DUP_ENTRY") {
+    if (isDuplicateDatabaseError(error)) {
       throw new AdminAuthError(
         "The email or username is already in use.",
         409,
@@ -519,33 +659,219 @@ export async function createAdminAccount(input: {
   }
 }
 
-/**
- * Enable or disable an administrator.
- * Disabling an account also revokes all of its sessions.
- */
+/* -------------------------------------------------------------------------- */
+/*                         Administrator Listing                              */
+/* -------------------------------------------------------------------------- */
+
+export async function listAdminAccounts(
+  input: AdminListInput,
+): Promise<AdminListResult> {
+  const { page, limit, offset } = normalizePagination(
+    input.page,
+    input.limit,
+  );
+
+  const filters = {
+    search: input.search?.trim() || undefined,
+    role: input.role,
+    is_active: input.isActive,
+  };
+
+  const sortBy = input.sortBy ?? "created_at";
+  const sortOrder = input.sortOrder ?? "desc";
+
+  const [admins, total] = await Promise.all([
+    adminAuthRepository.listAdmins({
+      ...filters,
+      limit,
+      offset,
+      sortBy,
+      sortOrder,
+    }),
+    adminAuthRepository.countAdmins(filters),
+  ]);
+
+  return {
+    admins: admins.map(toPublicAdmin),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*                         Administrator Update                               */
+/* -------------------------------------------------------------------------- */
+
+export async function updateAdminAccount(
+  adminUserId: string,
+  input: UpdateAdminAccountInput,
+): Promise<AdminPublicProfile> {
+  const admin = await ensureAdminExists(adminUserId);
+
+  const username =
+    input.username !== undefined
+      ? normalizeUsername(input.username)
+      : undefined;
+
+  const email =
+    input.email !== undefined
+      ? normalizeEmail(input.email)
+      : undefined;
+
+  if (username !== undefined && !username) {
+    throw new AdminAuthError(
+      "Username cannot be empty.",
+      400,
+      "INVALID_USERNAME",
+    );
+  }
+
+  if (email !== undefined && !email) {
+    throw new AdminAuthError(
+      "Email cannot be empty.",
+      400,
+      "INVALID_EMAIL",
+    );
+  }
+
+  if (email !== undefined && email !== admin.email) {
+    const existing =
+      await adminAuthRepository.findAdminByEmail(email);
+
+    if (existing && existing.id !== adminUserId) {
+      throw new AdminAuthError(
+        "This email is already in use.",
+        409,
+        "ADMIN_EMAIL_ALREADY_EXISTS",
+      );
+    }
+  }
+
+  if (
+    username !== undefined &&
+    username !== admin.username
+  ) {
+    const existing =
+      await adminAuthRepository.findAdminByUsername(username);
+
+    if (existing && existing.id !== adminUserId) {
+      throw new AdminAuthError(
+        "This username is already in use.",
+        409,
+        "ADMIN_USERNAME_ALREADY_EXISTS",
+      );
+    }
+  }
+
+  const newRole = input.role ?? admin.role;
+
+  await ensureLastSuperAdminIsPreserved(
+    admin,
+    newRole === "super_admin",
+  );
+
+  try {
+    const updated = await adminAuthRepository.updateAdmin(
+      adminUserId,
+      {
+        ...(username !== undefined ? { username } : {}),
+        ...(email !== undefined ? { email } : {}),
+        ...(input.role !== undefined ? { role: input.role } : {}),
+      },
+    );
+
+    if (!updated) {
+      throw new AdminAuthError(
+        "Unable to update administrator.",
+        500,
+        "ADMIN_UPDATE_FAILED",
+      );
+    }
+
+    return toPublicAdmin(updated);
+  } catch (error) {
+    if (error instanceof AdminAuthError) {
+      throw error;
+    }
+
+    if (isDuplicateDatabaseError(error)) {
+      throw new AdminAuthError(
+        "The email or username is already in use.",
+        409,
+        "ADMIN_ALREADY_EXISTS",
+      );
+    }
+
+    throw error;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                         Administrator Status                               */
+/* -------------------------------------------------------------------------- */
+
 export async function setAdminAccountActive(
   adminUserId: string,
   isActive: boolean,
 ): Promise<void> {
-  const admin =
-    await adminAuthRepository.findAdminById(adminUserId);
+  const admin = await ensureAdminExists(adminUserId);
 
-  if (!admin) {
-    throw new AdminAuthError(
-      "Administrator not found.",
-      404,
-      "ADMIN_NOT_FOUND",
-    );
+  if (!isActive) {
+    await ensureLastSuperAdminIsPreserved(admin, false);
   }
 
-  await adminAuthRepository.setAdminActive(
+  const updated = await adminAuthRepository.setAdminActive(
     adminUserId,
     isActive,
   );
 
+  if (!updated) {
+    throw new AdminAuthError(
+      "Unable to update administrator status.",
+      500,
+      "ADMIN_STATUS_UPDATE_FAILED",
+    );
+  }
+
   if (!isActive) {
     await adminAuthRepository.revokeAllAdminSessions(
       adminUserId,
+    );
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                         Administrator Deletion                             */
+/* -------------------------------------------------------------------------- */
+
+export async function deleteAdminAccount(
+  adminUserId: string,
+  requestingAdminId: string,
+): Promise<void> {
+  if (adminUserId === requestingAdminId) {
+    throw new AdminAuthError(
+      "You cannot delete your own account.",
+      403,
+      "CANNOT_DELETE_SELF",
+    );
+  }
+
+  const admin = await ensureAdminExists(adminUserId);
+
+  await ensureLastSuperAdminIsPreserved(admin, false);
+
+  const deleted =
+    await adminAuthRepository.deleteAdmin(adminUserId);
+
+  if (!deleted) {
+    throw new AdminAuthError(
+      "Unable to delete administrator.",
+      500,
+      "ADMIN_DELETE_FAILED",
     );
   }
 }

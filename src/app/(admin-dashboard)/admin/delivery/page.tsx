@@ -160,7 +160,22 @@ async function apiRequest<T>(
   try {
     result = await response.json();
   } catch {
+    if (response.status === 401) {
+      window.location.replace("/admin/login");
+      throw new Error("Invalid or expired session.");
+    }
+
     throw new Error("تعذر قراءة استجابة الخادم.");
+  }
+
+  // Handle invalid or expired admin session.
+  if (
+    response.status === 401 &&
+    result?.message === "Invalid or expired session."
+  ) {
+    window.location.replace("/admin/login");
+
+    throw new Error("Invalid or expired session.");
   }
 
   if (!response.ok) {

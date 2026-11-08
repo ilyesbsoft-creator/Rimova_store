@@ -1,42 +1,49 @@
 
 import { z } from "zod";
 
-/**
- * Shared validation rules
- */
+/* -------------------------------------------------------------------------- */
+/*                              Shared Schemas                                */
+/* -------------------------------------------------------------------------- */
 
-const emailSchema = z
+export const uuidSchema = z.string().uuid("Invalid ID.");
+
+export const emailSchema = z
   .string()
   .trim()
   .min(1, "Email is required.")
   .max(254, "Email must not exceed 254 characters.")
   .email("Invalid email address.");
 
-const usernameSchema = z
+export const usernameSchema = z
   .string()
   .trim()
   .min(3, "Username must contain at least 3 characters.")
   .max(100, "Username must not exceed 100 characters.")
   .regex(
-    /^[a-zA-Z0-9_.-]+$/,
-    "Username can contain only letters, numbers, dots, underscores, and hyphens.",
+    /^[a-zA-Z0-9_.-]+(?: [a-zA-Z0-9_.-]+)*$/,
+    "Username can contain only letters, numbers, dots, underscores, hyphens, and spaces.",
   );
 
-const passwordSchema = z
+export const passwordSchema = z
   .string()
   .min(6, "Password must contain at least 6 characters.")
   .max(128, "Password must not exceed 128 characters.");
 
-const adminRoleSchema = z.enum([
+export const strongPasswordSchema = z
+  .string()
+  .min(12, "Password must contain at least 12 characters.")
+  .max(128, "Password must not exceed 128 characters.");
+
+export const adminRoleSchema = z.enum([
   "super_admin",
   "admin",
   "manager",
   "support",
 ]);
 
-/**
- * Login
- */
+/* -------------------------------------------------------------------------- */
+/*                                    Login                                   */
+/* -------------------------------------------------------------------------- */
 
 export const adminLoginSchema = z
   .object({
@@ -51,22 +58,22 @@ export const adminLoginSchema = z
       .min(1, "Password is required.")
       .max(128, "Password must not exceed 128 characters."),
 
-    rememberMe: z.boolean().optional().default(false),
+    rememberMe: z.boolean().default(false),
   })
   .strict();
 
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
 
-/**
- * Create an admin account
- */
+/* -------------------------------------------------------------------------- */
+/*                              Create Administrator                         */
+/* -------------------------------------------------------------------------- */
 
 export const createAdminSchema = z
   .object({
     username: usernameSchema,
     email: emailSchema,
     password: passwordSchema,
-    role: adminRoleSchema.optional().default("admin"),
+    role: adminRoleSchema.default("admin"),
   })
   .strict();
 
@@ -74,9 +81,9 @@ export type CreateAdminValidationInput = z.infer<
   typeof createAdminSchema
 >;
 
-/**
- * Update admin profile
- */
+/* -------------------------------------------------------------------------- */
+/*                              Update Administrator                         */
+/* -------------------------------------------------------------------------- */
 
 export const updateAdminSchema = z
   .object({
@@ -86,7 +93,7 @@ export const updateAdminSchema = z
   })
   .strict()
   .refine(
-    (data) => Object.keys(data).length > 0,
+    (data) => Object.values(data).some((value) => value !== undefined),
     {
       message: "At least one field must be provided.",
     },
@@ -96,9 +103,21 @@ export type UpdateAdminValidationInput = z.infer<
   typeof updateAdminSchema
 >;
 
-/**
- * Change password
- */
+/* -------------------------------------------------------------------------- */
+/*                              Delete Administrator                         */
+/* -------------------------------------------------------------------------- */
+
+export const deleteAdminSchema = z
+  .object({
+    id: uuidSchema,
+  })
+  .strict();
+
+export type DeleteAdminInput = z.infer<typeof deleteAdminSchema>;
+
+/* -------------------------------------------------------------------------- */
+/*                              Change Password                              */
+/* -------------------------------------------------------------------------- */
 
 export const changeAdminPasswordSchema = z
   .object({
@@ -107,7 +126,7 @@ export const changeAdminPasswordSchema = z
       .min(1, "Current password is required.")
       .max(128, "Current password must not exceed 128 characters."),
 
-    newPassword: passwordSchema,
+    newPassword: strongPasswordSchema,
   })
   .strict()
   .refine(
@@ -122,9 +141,9 @@ export type ChangeAdminPasswordInput = z.infer<
   typeof changeAdminPasswordSchema
 >;
 
-/**
- * Update admin account status
- */
+/* -------------------------------------------------------------------------- */
+/*                              Update Account Status                         */
+/* -------------------------------------------------------------------------- */
 
 export const updateAdminStatusSchema = z
   .object({
@@ -136,9 +155,9 @@ export type UpdateAdminStatusInput = z.infer<
   typeof updateAdminStatusSchema
 >;
 
-/**
- * List admins
- */
+/* -------------------------------------------------------------------------- */
+/*                              List Administrators                          */
+/* -------------------------------------------------------------------------- */
 
 export const listAdminsQuerySchema = z
   .object({
@@ -165,7 +184,13 @@ export const listAdminsQuerySchema = z
       .default(20),
 
     sortBy: z
-      .enum(["username", "email", "role", "created_at", "last_login_at"])
+      .enum([
+        "username",
+        "email",
+        "role",
+        "created_at",
+        "last_login_at",
+      ])
       .default("created_at"),
 
     sortOrder: z
@@ -178,16 +203,26 @@ export type ListAdminsQueryInput = z.infer<
   typeof listAdminsQuerySchema
 >;
 
-/**
- * Revoke a specific admin session
- */
+/* -------------------------------------------------------------------------- */
+/*                              Session Management                            */
+/* -------------------------------------------------------------------------- */
 
 export const revokeAdminSessionSchema = z
   .object({
-    sessionId: z.string().uuid("Invalid session ID."),
+    sessionId: uuidSchema,
   })
   .strict();
 
 export type RevokeAdminSessionInput = z.infer<
   typeof revokeAdminSessionSchema
+>;
+
+export const adminSessionParamsSchema = z
+  .object({
+    adminId: uuidSchema,
+  })
+  .strict();
+
+export type AdminSessionParamsInput = z.infer<
+  typeof adminSessionParamsSchema
 >;

@@ -199,6 +199,7 @@ function getErrorMessage(error: unknown): string {
     : "حدث خطأ غير متوقع. يرجى المحاولة مجددًا.";
 }
 
+
 async function apiRequest<T>(
   url: string,
   init?: RequestInit,
@@ -206,7 +207,9 @@ async function apiRequest<T>(
   const response = await fetch(url, {
     ...init,
     headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.body && !(init.body instanceof FormData)
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...init?.headers,
     },
     credentials: "same-origin",
@@ -216,6 +219,17 @@ async function apiRequest<T>(
     | ApiResponse<T>
     | null;
 
+  // Handle invalid or expired admin session.
+  if (
+    response.status === 401 &&
+    body?.message === "Invalid or expired session."
+  ) {
+    window.location.replace("/admin/login");
+
+    throw new Error("Invalid or expired session.");
+  }
+
+  // Handle HTTP errors.
   if (!response.ok) {
     throw new Error(
       body?.message ||
@@ -224,12 +238,14 @@ async function apiRequest<T>(
     );
   }
 
+  // Extract data from the API response.
   if (body && "data" in body && body.data !== undefined) {
     return body.data;
   }
 
   return body as T;
 }
+
 
 function getQueryString(
   filters: OrderFilters,

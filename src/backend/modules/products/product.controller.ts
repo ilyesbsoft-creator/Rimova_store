@@ -24,6 +24,8 @@ import {
   updateAttributeSchema,
   createAttributeValueSchema,
   updateAttributeValueSchema,
+  addProductImagesSchema,
+  productImageUrlInputSchema,
 } from "./product.validation";
 
 import type {
@@ -71,6 +73,7 @@ function getStringField(
 function parseJsonField<T>(
   value: string | undefined,
   fallback: T,
+  fieldName: string,
 ): T {
   if (!value) {
     return fallback;
@@ -80,7 +83,7 @@ function parseJsonField<T>(
     return JSON.parse(value) as T;
   } catch {
     throw new HttpError(
-      `Invalid JSON in "${value}" field.`,
+      `Invalid JSON in "${fieldName}" field.`,
       400,
     );
   }
@@ -105,7 +108,10 @@ function isUploadedFile(
  *
  * image_urls example:
  * [
- *   { "image_url": "https://example.com/image.jpg", "alt_text": "Front" }
+ *   {
+ *     "image_url": "https://example.com/image.jpg",
+ *     "alt_text": "Front"
+ *   }
  * ]
  */
 async function readProductPayload(
@@ -137,13 +143,16 @@ async function readProductPayload(
       .filter(isUploadedFile);
 
     const externalImages = parseJsonField<
-      Array<{
-        image_url: string;
-        alt_text?: string | null;
-      }>
+      unknown[]
     >(
       getStringField(formData, "image_urls"),
       [],
+      "image_urls",
+    );
+
+    const validatedExternalImages = validate(
+      z.array(productImageUrlInputSchema).max(20),
+      externalImages,
     );
 
     const images: ProductImageInput[] = [];
@@ -166,12 +175,19 @@ async function readProductPayload(
       });
     }
 
-    for (const image of externalImages) {
+    for (const image of validatedExternalImages) {
       images.push({
         type: "url",
         image_url: image.image_url,
         alt_text: image.alt_text,
       });
+    }
+
+    if (images.length > 20) {
+      throw new HttpError(
+        "You can add up to 20 images at once.",
+        400,
+      );
     }
 
     if (images.length > 0) {
@@ -299,6 +315,7 @@ export async function createProduct(
       201,
     );
   } catch (error) {
+	console.error("createProduct error =",error );
     return getErrorResponse(error);
   }
 }
@@ -378,9 +395,7 @@ export async function addProductImages(
     const body = await readProductPayload(request);
 
     const validated = validate(
-      z.object({
-        images: z.array(z.unknown()).min(1).max(20),
-      }),
+      addProductImagesSchema,
       body,
     );
 
@@ -530,6 +545,7 @@ export async function createVariant(
       201,
     );
   } catch (error) {
+	  console.error("createVariant error =",error );
     return getErrorResponse(error);
   }
 }
@@ -675,6 +691,11 @@ export async function setVariantStock(
 
 /**
  * POST /api/admin/products/:id/attributes
+ *
+ * Body:
+ * {
+ *   "global_attribute_id": "..."
+ * }
  */
 export async function createAttribute(
   request: Request,
@@ -704,12 +725,18 @@ export async function createAttribute(
       201,
     );
   } catch (error) {
+	  console.error("createAttribute error =",error );
     return getErrorResponse(error);
   }
 }
 
 /**
  * PATCH /api/admin/products/:id/attributes/:attributeId
+ *
+ * Body:
+ * {
+ *   "global_attribute_id": "..."
+ * }
  */
 export async function updateAttribute(
   request: Request,
@@ -776,6 +803,13 @@ export async function removeAttribute(
 
 /**
  * POST /api/admin/products/:id/attributes/:attributeId/values
+ *
+ * Body:
+ * {
+ *   "value": "Black",
+ *   "color_code": "#000000",
+ *   "image_url": null
+ * }
  */
 export async function createAttributeValue(
   request: Request,
@@ -808,6 +842,7 @@ export async function createAttributeValue(
       201,
     );
   } catch (error) {
+	  console.error("createAttributeValue error =",error );
     return getErrorResponse(error);
   }
 }

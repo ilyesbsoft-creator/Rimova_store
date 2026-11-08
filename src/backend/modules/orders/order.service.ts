@@ -358,13 +358,12 @@ export async function createOrder(input: CreateOrderInput) {
           item.quantity,
           trx
         );
-      } else {
-        await decreaseProductStock(
-          item.product_id,
-          item.quantity,
-          trx
-        );
-      }
+      } 
+      await decreaseProductStock(
+        item.product_id,
+        item.quantity,
+        trx
+      );
     }
 
     // 11. إرجاع ملخص الطلب

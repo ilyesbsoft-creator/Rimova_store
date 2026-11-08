@@ -4,6 +4,10 @@ import type { Knex } from "knex";
 
 type DatabaseConnection = Knex | Knex.Transaction;
 
+/* =========================================================
+   BASIC TYPES
+========================================================= */
+
 export type ProductRow = {
   id: string;
   category_id: string;
@@ -16,35 +20,32 @@ export type ProductRow = {
   is_active: boolean | number;
 };
 
-export type ProductImageRow = {
-  id: string;
-  image_url: string;
-  alt_text: string | null;
-  sort_order: number;
-  is_primary: boolean | number;
-};
-
 export type ProductVariantRow = {
   id: string;
   product_id: string;
   sku: string | null;
   price: string | number | null;
   stock_quantity: number;
+  image_url: string | null;
 };
 
 export type VariantAttributeRow = {
   variant_id: string;
   attribute_id: string;
   attribute_name: string;
+  attribute_type: string;
   attribute_value_id: string;
   attribute_value: string;
+  color_code: string | null;
 };
 
 export type ProductAttributeOptionRow = {
   attribute_id: string;
   attribute_name: string;
+  attribute_type: string;
   attribute_value_id: string;
   attribute_value: string;
+  color_code: string | null;
 };
 
 /* =========================================================
@@ -58,17 +59,6 @@ export type AdminProductRow = ProductRow & {
   updated_at: Date;
 };
 
-export type AdminProductImageRow = {
-  id: string;
-  product_id: string;
-  image_url: string;
-  image_public_id: string | null;
-  alt_text: string | null;
-  sort_order: number;
-  is_primary: boolean | number;
-  created_at: Date;
-};
-
 export type AdminProductVariantRow = ProductVariantRow & {
   is_active: boolean | number;
   created_at: Date;
@@ -78,14 +68,17 @@ export type AdminProductVariantRow = ProductVariantRow & {
 export type AdminProductAttributeRow = {
   id: string;
   product_id: string;
+  global_attribute_id: string;
   name: string;
+  type: string;
   created_at: Date;
 };
 
 export type AdminProductAttributeValueRow = {
   id: string;
-  attribute_id: string;
+  product_attribute_id: string;
   value: string;
+  color_code: string | null;
 };
 
 export type CreateProductData = {
@@ -136,6 +129,57 @@ export interface PaginatedProducts {
   };
 }
 
+export type CreateProductVariantData = {
+  id: string;
+  product_id: string;
+  sku?: string | null;
+  price?: number | string | null;
+  stock_quantity?: number;
+  image_url?: string | null;
+  is_active?: boolean;
+};
+
+export type UpdateProductVariantData = {
+  sku?: string | null;
+  price?: number | string | null;
+  stock_quantity?: number;
+  image_url?: string | null;
+  is_active?: boolean;
+};
+
+export type CreateProductAttributeData = {
+  id: string;
+  product_id: string;
+  global_attribute_id: string;
+};
+
+export type UpdateProductAttributeData = {
+  global_attribute_id: string;
+};
+
+export type CreateProductAttributeValueData = {
+  id: string;
+  product_attribute_id: string;
+  value: string;
+  color_code?: string | null;
+};
+
+export type UpdateProductAttributeValueData = {
+  value?: string;
+  color_code?: string | null;
+};
+
+export type ProductImageRow = {
+  id: string;
+  product_id: string;
+  image_url: string;
+  image_public_id: string | null;
+  alt_text: string | null;
+  sort_order: number;
+  is_primary: boolean | number;
+  created_at: Date;
+};
+
 export type CreateProductImageData = {
   id: string;
   product_id: string;
@@ -154,44 +198,8 @@ export type UpdateProductImageData = {
   is_primary?: boolean;
 };
 
-export type CreateProductVariantData = {
-  id: string;
-  product_id: string;
-  sku?: string | null;
-  price?: number | string | null;
-  stock_quantity?: number;
-  is_active?: boolean;
-};
-
-export type UpdateProductVariantData = {
-  sku?: string | null;
-  price?: number | string | null;
-  stock_quantity?: number;
-  is_active?: boolean;
-};
-
-export type CreateProductAttributeData = {
-  id: string;
-  product_id: string;
-  name: string;
-};
-
-export type UpdateProductAttributeData = {
-  name: string;
-};
-
-export type CreateProductAttributeValueData = {
-  id: string;
-  attribute_id: string;
-  value: string;
-};
-
-export type UpdateProductAttributeValueData = {
-  value: string;
-};
-
 /* =========================================================
-   EXISTING FUNCTIONS
+   EXISTING PUBLIC FUNCTIONS
 ========================================================= */
 
 /**
@@ -219,26 +227,6 @@ export async function findActiveProductById(
 }
 
 /**
- * جلب صور المنتج وترتيب الصورة الرئيسية أولًا.
- */
-export async function findProductImages(
-  productId: string,
-  connection: DatabaseConnection = db
-): Promise<ProductImageRow[]> {
-  return connection<ProductImageRow>("product_images")
-    .select(
-      "id",
-      "image_url",
-      "alt_text",
-      "sort_order",
-      "is_primary"
-    )
-    .where("product_id", productId)
-    .orderBy("is_primary", "desc")
-    .orderBy("sort_order", "asc");
-}
-
-/**
  * جلب المتغيرات النشطة للمنتج.
  */
 export async function findActiveProductVariants(
@@ -251,7 +239,8 @@ export async function findActiveProductVariants(
       "product_id",
       "sku",
       "price",
-      "stock_quantity"
+      "stock_quantity",
+      "image_url"
     )
     .where("product_id", productId)
     .where("is_active", true)
@@ -260,6 +249,8 @@ export async function findActiveProductVariants(
 
 /**
  * جلب خصائص وقيم المتغيرات المحددة.
+ *
+ * اسم الخاصية ونوعها يأتيان من global_attributes.
  */
 export async function findVariantAttributes(
   variantIds: string[],
@@ -278,24 +269,28 @@ export async function findVariantAttributes(
     .join(
       "product_attributes as pa",
       "pa.id",
-      "pav.attribute_id"
+      "pav.product_attribute_id"
+    )
+    .join(
+      "global_attributes as ga",
+      "ga.id",
+      "pa.global_attribute_id"
     )
     .select(
       "pvav.variant_id",
       "pa.id as attribute_id",
-      "pa.name as attribute_name",
+      "ga.name as attribute_name",
+      "ga.type as attribute_type",
       "pav.id as attribute_value_id",
-      "pav.value as attribute_value"
+      "pav.value as attribute_value",
+      "pav.color_code"
     )
     .whereIn("pvav.variant_id", variantIds)
-    .orderBy("pa.name", "asc");
+    .orderBy("ga.name", "asc");
 }
 
 /**
  * جلب جميع خصائص المنتج وقيمها المسجلة.
- *
- * تُستخدم هذه الدالة لبناء مجموعات مستقلة في الواجهة،
- * مثل اللون والحجم، بدل عرض كل تركيبة كخيار منفصل.
  */
 export async function findProductAttributeOptions(
   productId: string,
@@ -303,15 +298,22 @@ export async function findProductAttributeOptions(
 ): Promise<ProductAttributeOptionRow[]> {
   return connection("product_attributes as pa")
     .join(
+      "global_attributes as ga",
+      "ga.id",
+      "pa.global_attribute_id"
+    )
+    .join(
       "product_attribute_values as pav",
-      "pav.attribute_id",
+      "pav.product_attribute_id",
       "pa.id"
     )
     .select(
       "pa.id as attribute_id",
-      "pa.name as attribute_name",
+      "ga.name as attribute_name",
+      "ga.type as attribute_type",
       "pav.id as attribute_value_id",
-      "pav.value as attribute_value"
+      "pav.value as attribute_value",
+      "pav.color_code"
     )
     .where("pa.product_id", productId)
     .orderBy("pa.created_at", "asc")
@@ -324,7 +326,6 @@ export async function findProductAttributeOptions(
 
 /**
  * جلب منتج حسب المعرّف دون اشتراط أن يكون نشطًا.
- * مخصص للإدارة.
  */
 export async function findProductById(
   id: string,
@@ -355,10 +356,7 @@ export async function createProduct(
 ): Promise<ProductRow> {
   await connection("products").insert(data);
 
-  const product = await findProductById(
-    data.id,
-    connection
-  );
+  const product = await findProductById(data.id, connection);
 
   if (!product) {
     throw new Error("PRODUCT_CREATE_FAILED");
@@ -369,23 +367,18 @@ export async function createProduct(
 
 /**
  * جلب المنتجات مع البحث والتصفية والترقيم.
- * مخصص للإدارة.
+ *
+ * الصورة الرئيسية تؤخذ من أول Variant لديه صورة.
  */
 export async function findProductsPaginated(
   filters: ProductFilters = {},
   connection: DatabaseConnection = db
 ): Promise<PaginatedProducts> {
-  const page = Math.max(
-    1,
-    Math.floor(filters.page ?? 1)
-  );
+  const page = Math.max(1, Math.floor(filters.page ?? 1));
 
   const limit = Math.min(
     100,
-    Math.max(
-      1,
-      Math.floor(filters.limit ?? 20)
-    )
+    Math.max(1, Math.floor(filters.limit ?? 20))
   );
 
   const offset = (page - 1) * limit;
@@ -405,16 +398,14 @@ export async function findProductsPaginated(
     ? sortBy
     : "created_at";
 
-  const safeSortOrder =
-    sortOrder === "asc" ? "asc" : "desc";
+  const safeSortOrder = sortOrder === "asc" ? "asc" : "desc";
 
   const buildQuery = () => {
-    const query = connection("products as p")
-      .leftJoin(
-        "categories as c",
-        "c.id",
-        "p.category_id"
-      );
+    const query = connection("products as p").leftJoin(
+      "categories as c",
+      "c.id",
+      "p.category_id"
+    );
 
     if (typeof filters.is_active === "boolean") {
       query.where("p.is_active", filters.is_active);
@@ -438,11 +429,12 @@ export async function findProductsPaginated(
     return query;
   };
 
-  const primaryImageQuery = connection("product_images as pi")
-    .select("pi.image_url")
-    .whereRaw("pi.product_id = p.id")
-    .orderBy("pi.is_primary", "desc")
-    .orderBy("pi.sort_order", "asc")
+  const primaryImageQuery = connection("product_variants as pv")
+    .select("pv.image_url")
+    .whereRaw("pv.product_id = p.id")
+    .whereNotNull("pv.image_url")
+    .where("pv.image_url", "!=", "")
+    .orderBy("pv.created_at", "asc")
     .limit(1);
 
   const [data, countResult] = await Promise.all([
@@ -468,9 +460,7 @@ export async function findProductsPaginated(
       .limit(limit)
       .offset(offset),
 
-    buildQuery()
-      .count({ total: "p.id" })
-      .first(),
+    buildQuery().count({ total: "p.id" }).first(),
   ]);
 
   const total = Number(countResult?.total ?? 0);
@@ -513,11 +503,7 @@ export async function setProductActiveStatus(
   isActive: boolean,
   connection: DatabaseConnection = db
 ): Promise<ProductRow | null> {
-  return updateProduct(
-    id,
-    { is_active: isActive },
-    connection
-  );
+  return updateProduct(id, { is_active: isActive }, connection);
 }
 
 /**
@@ -540,13 +526,13 @@ export async function deleteProduct(
 ========================================================= */
 
 /**
- * جلب جميع صور المنتج مع بيانات Cloudinary.
+ * جلب صور المنتج.
  */
-export async function findProductImagesForAdmin(
+export async function findProductImages(
   productId: string,
   connection: DatabaseConnection = db
-): Promise<AdminProductImageRow[]> {
-  return connection<AdminProductImageRow>("product_images")
+): Promise<ProductImageRow[]> {
+  return connection<ProductImageRow>("product_images")
     .select(
       "id",
       "product_id",
@@ -558,89 +544,92 @@ export async function findProductImagesForAdmin(
       "created_at"
     )
     .where("product_id", productId)
-    .orderBy("is_primary", "desc")
-    .orderBy("sort_order", "asc");
+    .orderBy("sort_order", "asc")
+    .orderBy("created_at", "asc");
 }
 
 /**
- * إضافة صورة للمنتج.
+ * جلب صور المنتج للإدارة.
  */
-export async function createProductImage(
-  data: CreateProductImageData,
+export async function findProductImagesForAdmin(
+  productId: string,
   connection: DatabaseConnection = db
-): Promise<AdminProductImageRow | undefined> {
-  await connection("product_images").insert(data);
+): Promise<ProductImageRow[]> {
+  return findProductImages(productId, connection);
+}
 
-  return connection<AdminProductImageRow>("product_images")
-    .where({ id: data.id })
+/**
+ * جلب صورة حسب المعرّف.
+ */
+export async function findProductImageById(
+  id: string,
+  connection: DatabaseConnection = db
+): Promise<ProductImageRow | undefined> {
+  return connection<ProductImageRow>("product_images")
+    .select("*")
+    .where({ id })
     .first();
 }
 
 /**
- * تعديل بيانات صورة.
+ * إنشاء صورة للمنتج.
+ */
+export async function createProductImage(
+  data: CreateProductImageData,
+  connection: DatabaseConnection = db
+): Promise<ProductImageRow | undefined> {
+  await connection("product_images").insert(data);
+
+  return findProductImageById(data.id, connection);
+}
+
+/**
+ * تعديل بيانات الصورة.
  */
 export async function updateProductImage(
   id: string,
-  productId: string,
   data: UpdateProductImageData,
   connection: DatabaseConnection = db
-): Promise<AdminProductImageRow | null> {
+): Promise<ProductImageRow | null> {
   const affectedRows = await connection("product_images")
-    .where({
-      id,
-      product_id: productId,
-    })
+    .where({ id })
     .update(data);
 
   if (!affectedRows) {
     return null;
   }
 
-  const image = await connection<AdminProductImageRow>(
-    "product_images"
-  )
-    .where({
-      id,
-      product_id: productId,
-    })
-    .first();
-
-  return image ?? null;
+  return (await findProductImageById(id, connection)) ?? null;
 }
 
 /**
- * حذف صورة من المنتج.
+ * حذف صورة.
  */
 export async function deleteProductImage(
   id: string,
-  productId: string,
   connection: DatabaseConnection = db
 ): Promise<boolean> {
   const affectedRows = await connection("product_images")
-    .where({
-      id,
-      product_id: productId,
-    })
+    .where({ id })
     .delete();
 
   return affectedRows > 0;
 }
 
 /**
- * تحديد صورة رئيسية للمنتج.
+ * تعيين صورة رئيسية للمنتج.
  *
- * يفضل استدعاء الدالة داخل Transaction
- * لضمان تحديث الصورتين كوحدة واحدة.
+ * يجب تنفيذها داخل Transaction.
  */
 export async function setProductPrimaryImage(
-  id: string,
   productId: string,
-  connection: DatabaseConnection = db
+  imageId: string,
+  trx: Knex.Transaction
 ): Promise<boolean> {
-  const image = await connection("product_images")
+  const image = await trx("product_images")
     .select("id")
     .where({
-      id,
+      id: imageId,
       product_id: productId,
     })
     .first();
@@ -649,20 +638,19 @@ export async function setProductPrimaryImage(
     return false;
   }
 
-  await connection("product_images")
+  await trx("product_images")
     .where({ product_id: productId })
     .update({ is_primary: false });
 
-  await connection("product_images")
+  await trx("product_images")
     .where({
-      id,
+      id: imageId,
       product_id: productId,
     })
     .update({ is_primary: true });
 
   return true;
 }
-
 /* =========================================================
    PRODUCT VARIANTS ADMIN FUNCTIONS
 ========================================================= */
@@ -681,6 +669,7 @@ export async function findProductVariantsForAdmin(
       "sku",
       "price",
       "stock_quantity",
+      "image_url",
       "is_active",
       "created_at",
       "updated_at"
@@ -703,6 +692,7 @@ export async function findProductVariantById(
       "sku",
       "price",
       "stock_quantity",
+      "image_url",
       "is_active",
       "created_at",
       "updated_at"
@@ -739,9 +729,7 @@ export async function updateProductVariant(
     return null;
   }
 
-  return (
-    (await findProductVariantById(id, connection)) ?? null
-  );
+  return (await findProductVariantById(id, connection)) ?? null;
 }
 
 /**
@@ -752,11 +740,7 @@ export async function setProductVariantActiveStatus(
   isActive: boolean,
   connection: DatabaseConnection = db
 ): Promise<AdminProductVariantRow | null> {
-  return updateProductVariant(
-    id,
-    { is_active: isActive },
-    connection
-  );
+  return updateProductVariant(id, { is_active: isActive }, connection);
 }
 
 /**
@@ -779,37 +763,57 @@ export async function deleteProductVariant(
 ========================================================= */
 
 /**
- * جلب جميع خصائص المنتج.
+ * جلب جميع خصائص المنتج مع الاسم والنوع من global_attributes.
  */
 export async function findProductAttributes(
   productId: string,
   connection: DatabaseConnection = db
 ): Promise<AdminProductAttributeRow[]> {
-  return connection<AdminProductAttributeRow>("product_attributes")
-    .select(
-      "id",
-      "product_id",
-      "name",
-      "created_at"
+  return connection("product_attributes as pa")
+    .join(
+      "global_attributes as ga",
+      "ga.id",
+      "pa.global_attribute_id"
     )
-    .where("product_id", productId)
-    .orderBy("created_at", "asc");
+    .select(
+      "pa.id",
+      "pa.product_id",
+      "pa.global_attribute_id",
+      "ga.name",
+      "ga.type",
+      "pa.created_at"
+    )
+    .where("pa.product_id", productId)
+    .orderBy("pa.created_at", "asc");
 }
 
 /**
- * جلب خاصية حسب المعرّف.
+ * جلب خاصية منتج حسب المعرّف.
  */
 export async function findProductAttributeById(
   id: string,
   connection: DatabaseConnection = db
 ): Promise<AdminProductAttributeRow | undefined> {
-  return connection<AdminProductAttributeRow>("product_attributes")
-    .where({ id })
+  return connection("product_attributes as pa")
+    .join(
+      "global_attributes as ga",
+      "ga.id",
+      "pa.global_attribute_id"
+    )
+    .select(
+      "pa.id",
+      "pa.product_id",
+      "pa.global_attribute_id",
+      "ga.name",
+      "ga.type",
+      "pa.created_at"
+    )
+    .where("pa.id", id)
     .first();
 }
 
 /**
- * إنشاء خاصية للمنتج.
+ * إضافة خاصية عامة إلى منتج.
  */
 export async function createProductAttribute(
   data: CreateProductAttributeData,
@@ -821,7 +825,7 @@ export async function createProductAttribute(
 }
 
 /**
- * تعديل اسم الخاصية.
+ * تغيير الخاصية العامة المرتبطة بالمنتج.
  */
 export async function updateProductAttribute(
   id: string,
@@ -836,13 +840,11 @@ export async function updateProductAttribute(
     return null;
   }
 
-  return (
-    (await findProductAttributeById(id, connection)) ?? null
-  );
+  return (await findProductAttributeById(id, connection)) ?? null;
 }
 
 /**
- * حذف خاصية.
+ * حذف خاصية من المنتج.
  * قيم الخاصية وروابطها تحذف وفق قيود Foreign Key.
  */
 export async function deleteProductAttribute(
@@ -861,7 +863,7 @@ export async function deleteProductAttribute(
 ========================================================= */
 
 /**
- * جلب جميع قيم خاصية محددة.
+ * جلب جميع قيم خاصية منتج محددة.
  */
 export async function findProductAttributeValues(
   attributeId: string,
@@ -872,10 +874,11 @@ export async function findProductAttributeValues(
   )
     .select(
       "id",
-      "attribute_id",
-      "value"
+      "product_attribute_id",
+      "value",
+      "color_code"
     )
-    .where("attribute_id", attributeId)
+    .where("product_attribute_id", attributeId)
     .orderBy("value", "asc");
 }
 
@@ -889,12 +892,18 @@ export async function findProductAttributeValueById(
   return connection<AdminProductAttributeValueRow>(
     "product_attribute_values"
   )
+    .select(
+      "id",
+      "product_attribute_id",
+      "value",
+      "color_code"
+    )
     .where({ id })
     .first();
 }
 
 /**
- * إضافة قيمة لخاصية.
+ * إضافة قيمة لخاصية منتج.
  */
 export async function createProductAttributeValue(
   data: CreateProductAttributeValueData,
@@ -957,11 +966,10 @@ export async function attachAttributeValueToVariant(
   attributeValueId: string,
   connection: DatabaseConnection = db
 ): Promise<void> {
-  await connection("product_variant_attribute_values")
-    .insert({
-      variant_id: variantId,
-      attribute_value_id: attributeValueId,
-    });
+  await connection("product_variant_attribute_values").insert({
+    variant_id: variantId,
+    attribute_value_id: attributeValueId,
+  });
 }
 
 /**
@@ -1026,10 +1034,7 @@ export async function replaceVariantAttributeValues(
   attributeValueIds: string[],
   connection: DatabaseConnection = db
 ): Promise<void> {
-  await detachAllAttributeValuesFromVariant(
-    variantId,
-    connection
-  );
+  await detachAllAttributeValuesFromVariant(variantId, connection);
 
   await attachAttributeValuesToVariant(
     variantId,
@@ -1138,7 +1143,6 @@ export async function decreaseProductVariantStock(
   return affectedRows > 0;
 }
 
-
 /* =========================================================
    SERVICE SUPPORT FUNCTIONS
 ========================================================= */
@@ -1149,7 +1153,7 @@ export async function decreaseProductVariantStock(
  */
 export async function findProductByIdForUpdate(
   id: string,
-  trx: Knex.Transaction,
+  trx: Knex.Transaction
 ): Promise<ProductRow | undefined> {
   return trx<ProductRow>("products")
     .select(
@@ -1183,6 +1187,7 @@ export async function findProductVariantByIdForUpdate(
       "sku",
       "price",
       "stock_quantity",
+      "image_url",
       "is_active",
       "created_at",
       "updated_at"
@@ -1194,6 +1199,7 @@ export async function findProductVariantByIdForUpdate(
 
 /**
  * التحقق من قيم الخصائص التي تنتمي إلى منتج معين.
+ *
  * لا تعيد إلا القيم التابعة لخصائص ذلك المنتج.
  */
 export async function findProductAttributeValuesByIds(
@@ -1203,9 +1209,11 @@ export async function findProductAttributeValuesByIds(
 ): Promise<
   Array<{
     id: string;
-    attribute_id: string;
+    product_attribute_id: string;
     attribute_name: string;
+    attribute_type: string;
     value: string;
+    color_code: string | null;
   }>
 > {
   if (attributeValueIds.length === 0) {
@@ -1216,13 +1224,20 @@ export async function findProductAttributeValuesByIds(
     .join(
       "product_attributes as pa",
       "pa.id",
-      "pav.attribute_id"
+      "pav.product_attribute_id"
+    )
+    .join(
+      "global_attributes as ga",
+      "ga.id",
+      "pa.global_attribute_id"
     )
     .select(
       "pav.id",
-      "pav.attribute_id",
-      "pa.name as attribute_name",
-      "pav.value"
+      "pa.id as product_attribute_id",
+      "ga.name as attribute_name",
+      "ga.type as attribute_type",
+      "pav.value",
+      "pav.color_code"
     )
     .where("pa.product_id", productId)
     .whereIn("pav.id", attributeValueIds);

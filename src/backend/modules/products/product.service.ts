@@ -1,13 +1,9 @@
 
-
-
 import { randomUUID } from "node:crypto";
-
 import type { Knex } from "knex";
 
 import db from "../../database/knex";
 import { findCategoryById } from "../categories/category.repository";
-
 
 import {
   findActiveProductById,
@@ -15,41 +11,33 @@ import {
   findActiveProductVariants,
   findVariantAttributes,
   findProductAttributeOptions,
-} from "./product.repository";
-
-import {
   createProduct,
   findProductById,
   findProductByIdForUpdate,
   findProductsPaginated,
   updateProduct,
   deleteProduct,
-
   findProductImagesForAdmin,
   createProductImage,
   updateProductImage,
   deleteProductImage,
   setProductPrimaryImage,
-
   findProductVariantsForAdmin,
   findProductVariantById,
   findProductVariantByIdForUpdate,
   createProductVariant,
   updateProductVariant,
   deleteProductVariant,
-
   findProductAttributes,
   findProductAttributeById,
   createProductAttribute,
   updateProductAttribute,
   deleteProductAttribute,
-
   findProductAttributeValues,
   findProductAttributeValueById,
   createProductAttributeValue,
   updateProductAttributeValue,
   deleteProductAttributeValue,
-
   replaceVariantAttributeValues,
   findProductAttributeValuesByIds,
   findProductVariantStockSummary,
@@ -118,15 +106,33 @@ export type UpdateVariantInput = UpdateProductVariantData & {
   attribute_value_ids?: string[];
 };
 
+/**
+ * ربط خاصية عامة بمنتج.
+ */
 export type CreateAttributeInput = Omit<
   CreateProductAttributeData,
   "id" | "product_id"
 >;
 
+/**
+ * تعديل ارتباط الخاصية العامة بالمنتج.
+ */
+export type UpdateAttributeInput =
+  UpdateProductAttributeData;
+
+/**
+ * إنشاء قيمة لخاصية المنتج.
+ */
 export type CreateAttributeValueInput = Omit<
   CreateProductAttributeValueData,
-  "id" | "attribute_id"
+  "id" | "product_attribute_id"
 >;
+
+/**
+ * تعديل قيمة خاصية المنتج.
+ */
+export type UpdateAttributeValueInput =
+  UpdateProductAttributeValueData;
 
 type PreparedImage = {
   id: string;
@@ -225,9 +231,6 @@ function assertPositiveInteger(
    CATEGORY HELPERS
 ========================================================= */
 
-/**
- * التأكد من وجود التصنيف وأنه نشط.
- */
 async function assertActiveCategory(
   categoryId: string,
   trx?: DatabaseTransaction
@@ -248,6 +251,34 @@ async function assertActiveCategory(
     throwConflict(
       "Cannot assign a product to an inactive category.",
       "CATEGORY_INACTIVE"
+    );
+  }
+}
+
+/* =========================================================
+   GLOBAL ATTRIBUTE HELPERS
+========================================================= */
+
+/**
+ * التحقق من وجود الخاصية العامة.
+ *
+ * ملاحظة:
+ * global_attributes هو مصدر اسم الخاصية ونوعها.
+ * لا نعدل الاسم من خلال خصائص المنتج.
+ */
+async function assertGlobalAttributeExists(
+  globalAttributeId: string,
+  trx: DatabaseTransaction
+): Promise<void> {
+  const attribute = await trx("global_attributes")
+    .select("id")
+    .where({ id: globalAttributeId })
+    .first();
+
+  if (!attribute) {
+    throwNotFound(
+      "Global attribute not found.",
+      "GLOBAL_ATTRIBUTE_NOT_FOUND"
     );
   }
 }
@@ -295,10 +326,6 @@ function validateExternalImageUrl(
   return normalized;
 }
 
-/**
- * رفع الملفات إلى Cloudinary وتجهيز سجلات الصور.
- * الروابط الخارجية لا تمر عبر Cloudinary.
- */
 async function prepareImages(
   productId: string,
   images: ProductImageInput[],
@@ -368,10 +395,6 @@ async function prepareImages(
   }
 }
 
-/**
- * تنظيف الصور المرفوعة عند فشل العملية.
- * لا نسمح لفشل التنظيف بإخفاء الخطأ الأصلي.
- */
 async function cleanupUploadedImages(
   images: UploadedCloudinaryImage[]
 ): Promise<void> {
@@ -382,9 +405,6 @@ async function cleanupUploadedImages(
   );
 }
 
-/**
- * حفظ سجلات الصور في قاعدة البيانات.
- */
 async function insertPreparedImages(
   productId: string,
   images: PreparedImage[],
@@ -403,6 +423,41 @@ async function insertPreparedImages(
 
     await createProductImage(data, trx);
   }
+}
+
+/**
+ * التحقق من أن الصورة المختارة موجودة مسبقاً
+ * ضمن صور المنتج في product_images.
+ *
+ * لا يتم رفع الصورة إلى Cloudinary.
+ * لا يتم إنشاء سجل صورة جديد.
+ * نحفظ الرابط الموجود فقط في قيمة الخاصية.
+ */
+async function validateProductImageSelection(
+  productId: string,
+  imageUrl: string,
+  trx: DatabaseTransaction
+): Promise<string> {
+  const normalized = validateExternalImageUrl(imageUrl);
+
+  const images = await findProductImagesForAdmin(
+    productId,
+    trx
+  );
+
+  const exists = images.some(
+    (image) => image.image_url === normalized
+  );
+
+  if (!exists) {
+    throw new ProductServiceError(
+      "Selected image does not belong to this product.",
+      400,
+      "INVALID_PRODUCT_IMAGE"
+    );
+  }
+
+  return normalized;
 }
 
 /* =========================================================
@@ -452,7 +507,9 @@ async function validateAttributeValueOwnership(
   const usedAttributes = new Set<string>();
 
   for (const value of values) {
-    if (usedAttributes.has(value.attribute_id)) {
+    if (
+      usedAttributes.has(value.product_attribute_id)
+    ) {
       throw new ProductServiceError(
         "A variant cannot have multiple values for the same attribute.",
         400,
@@ -460,18 +517,33 @@ async function validateAttributeValueOwnership(
       );
     }
 
-    usedAttributes.add(value.attribute_id);
+    usedAttributes.add(value.product_attribute_id);
   }
+}
+
+/**
+ * التحقق من أن نص القيمة صالح.
+ */
+function normalizeAttributeValue(
+  value: string
+): string {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw new ProductServiceError(
+      "Attribute value cannot be empty.",
+      400,
+      "INVALID_ATTRIBUTE_VALUE"
+    );
+  }
+
+  return normalized;
 }
 
 /* =========================================================
    INVENTORY HELPERS
 ========================================================= */
 
-/**
- * تحديث المخزون الإجمالي للمنتج من مجموع مخزون متغيراته.
- * يجب استدعاؤها داخل Transaction.
- */
 async function syncProductStockFromVariants(
   productId: string,
   trx: DatabaseTransaction
@@ -501,10 +573,6 @@ async function syncProductStockFromVariants(
   return summary.total_stock;
 }
 
-/**
- * التأكد من أن المنتج لا يحتوي على متغيرات
- * قبل تعديل مخزونه المباشر.
- */
 async function assertProductHasNoVariants(
   productId: string,
   trx: DatabaseTransaction
@@ -526,9 +594,6 @@ async function assertProductHasNoVariants(
    PRODUCT ADMIN SERVICES
 ========================================================= */
 
-/**
- * جلب المنتجات مع البحث والتصفية والترقيم.
- */
 export async function getProducts(
   filters: ProductFilters = {}
 ) {
@@ -569,7 +634,6 @@ export async function getProductDetails(
     }))
   );
 
-  // خصائص كل متغير (اللون، المقاس...) لعرضها عند التعديل
   const variantAttributes = await findVariantAttributes(
     variants.map((variant) => variant.id)
   );
@@ -581,8 +645,11 @@ export async function getProductDetails(
       .map((item) => ({
         attribute_id: item.attribute_id,
         attribute_name: item.attribute_name,
+        attribute_type: item.attribute_type,
         attribute_value_id: item.attribute_value_id,
         attribute_value: item.attribute_value,
+        color_code: item.color_code,
+        image_url: item.image_url,
       })),
   }));
 
@@ -698,9 +765,7 @@ export async function updateProductDetails(
           );
         }
 
-        if (
-          input.stock_quantity !== undefined
-        ) {
+        if (input.stock_quantity !== undefined) {
           assertNonNegativeInteger(
             input.stock_quantity,
             "stock_quantity"
@@ -774,7 +839,6 @@ export async function updateProductDetails(
 
 /**
  * حذف المنتج وجميع سجلاته التابعة.
- * حذف ملفات Cloudinary يتم بعد نجاح Transaction.
  */
 export async function deleteProductWithImages(
   productId: string
@@ -833,10 +897,6 @@ export async function deleteProductWithImages(
    PRODUCT IMAGE SERVICES
 ========================================================= */
 
-/**
- * إضافة صور إلى منتج موجود.
- * يقبل ملفات Cloudinary وروابط خارجية.
- */
 export async function addProductImages(
   productId: string,
   inputImages: ProductImageInput[]
@@ -887,10 +947,6 @@ export async function addProductImages(
   }
 }
 
-/**
- * تعديل بيانات صورة.
- * لا يسمح بتغيير public_id مباشرة من الواجهة.
- */
 export async function updateProductImageDetails(
   productId: string,
   imageId: string,
@@ -933,10 +989,6 @@ export async function updateProductImageDetails(
   });
 }
 
-/**
- * حذف صورة.
- * الصور الخارجية تحذف من قاعدة البيانات فقط.
- */
 export async function removeProductImage(
   productId: string,
   imageId: string
@@ -955,6 +1007,21 @@ export async function removeProductImage(
       "PRODUCT_IMAGE_NOT_FOUND"
     );
   }
+  
+const usedByAttributeValue = await db(
+  "product_attribute_values"
+)
+  .where({
+    image_url: image.image_url,
+  })
+  .first();
+
+if (usedByAttributeValue) {
+  throwConflict(
+    "This image is currently used by a product attribute value.",
+    "PRODUCT_IMAGE_IN_USE"
+  );
+}  
 
   const deleted = await db.transaction(
     async (trx) => {
@@ -980,9 +1047,6 @@ export async function removeProductImage(
   return true;
 }
 
-/**
- * تحديد الصورة الرئيسية.
- */
 export async function makeProductImagePrimary(
   productId: string,
   imageId: string
@@ -1009,9 +1073,6 @@ export async function makeProductImagePrimary(
    PRODUCT VARIANT SERVICES
 ========================================================= */
 
-/**
- * إنشاء متغير جديد.
- */
 export async function createVariant(
   productId: string,
   input: CreateVariantInput
@@ -1096,9 +1157,6 @@ export async function createVariant(
   });
 }
 
-/**
- * تعديل متغير وخصائصه.
- */
 export async function updateVariantDetails(
   productId: string,
   variantId: string,
@@ -1183,10 +1241,6 @@ export async function updateVariantDetails(
   });
 }
 
-/**
- * حذف متغير.
- * يمنع الحذف إذا كان لديه مخزون.
- */
 export async function removeVariant(
   productId: string,
   variantId: string
@@ -1252,9 +1306,6 @@ export async function removeVariant(
    INVENTORY SERVICES
 ========================================================= */
 
-/**
- * تعديل مخزون منتج لا يحتوي على متغيرات.
- */
 export async function setProductStock(
   productId: string,
   quantity: number
@@ -1299,9 +1350,6 @@ export async function setProductStock(
   });
 }
 
-/**
- * تعديل مخزون متغير مع تحديث إجمالي مخزون المنتج.
- */
 export async function setVariantStock(
   productId: string,
   variantId: string,
@@ -1367,7 +1415,10 @@ export async function setVariantStock(
 ========================================================= */
 
 /**
- * إنشاء خاصية للمنتج.
+ * ربط خاصية عامة بمنتج.
+ *
+ * مثال:
+ * global_attribute_id = معرف Color
  */
 export async function createAttribute(
   productId: string,
@@ -1386,11 +1437,16 @@ export async function createAttribute(
       );
     }
 
+    await assertGlobalAttributeExists(
+      input.global_attribute_id,
+      trx
+    );
+
     return createProductAttribute(
       {
         id: randomUUID(),
         product_id: productId,
-        name: input.name.trim(),
+        global_attribute_id: input.global_attribute_id,
       },
       trx
     );
@@ -1398,13 +1454,14 @@ export async function createAttribute(
 }
 
 /**
- * تعديل اسم خاصية.
- * يجب أن تنتمي الخاصية إلى المنتج.
+ * تغيير الخاصية العامة المرتبطة بالمنتج.
+ *
+ * لا يغير اسم global_attribute نفسه.
  */
 export async function updateAttribute(
   productId: string,
   attributeId: string,
-  input: UpdateProductAttributeData
+  input: UpdateAttributeInput
 ) {
   return db.transaction(async (trx) => {
     const attribute =
@@ -1423,10 +1480,15 @@ export async function updateAttribute(
       );
     }
 
+    await assertGlobalAttributeExists(
+      input.global_attribute_id,
+      trx
+    );
+
     return updateProductAttribute(
       attributeId,
       {
-        name: input.name.trim(),
+        global_attribute_id: input.global_attribute_id,
       },
       trx
     );
@@ -1434,7 +1496,7 @@ export async function updateAttribute(
 }
 
 /**
- * حذف خاصية.
+ * حذف خاصية من المنتج.
  */
 export async function removeAttribute(
   productId: string,
@@ -1468,9 +1530,6 @@ export async function removeAttribute(
    PRODUCT ATTRIBUTE VALUE SERVICES
 ========================================================= */
 
-/**
- * إنشاء قيمة لخاصية.
- */
 export async function createAttributeValue(
   productId: string,
   attributeId: string,
@@ -1493,11 +1552,16 @@ export async function createAttributeValue(
       );
     }
 
+    const value = normalizeAttributeValue(
+      input.value
+    );
+
     return createProductAttributeValue(
       {
         id: randomUUID(),
-        attribute_id: attributeId,
-        value: input.value.trim(),
+        product_attribute_id: attributeId,
+        value,
+        color_code: input.color_code ?? null,
       },
       trx
     );
@@ -1511,7 +1575,7 @@ export async function updateAttributeValue(
   productId: string,
   attributeId: string,
   valueId: string,
-  input: UpdateProductAttributeValueData
+  input: UpdateAttributeValueInput
 ) {
   return db.transaction(async (trx) => {
     const attribute =
@@ -1538,7 +1602,7 @@ export async function updateAttributeValue(
 
     if (
       !value ||
-      value.attribute_id !== attributeId
+      value.product_attribute_id !== attributeId
     ) {
       throwNotFound(
         "Attribute value not found.",
@@ -1546,11 +1610,29 @@ export async function updateAttributeValue(
       );
     }
 
+    const data: UpdateProductAttributeValueData = {};
+
+    if (input.value !== undefined) {
+      data.value = normalizeAttributeValue(
+        input.value
+      );
+    }
+
+    if (input.color_code !== undefined) {
+      data.color_code = input.color_code;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new ProductServiceError(
+        "No attribute value data provided.",
+        400,
+        "EMPTY_UPDATE"
+      );
+    }
+
     return updateProductAttributeValue(
       valueId,
-      {
-        value: input.value.trim(),
-      },
+      data,
       trx
     );
   });
@@ -1589,7 +1671,7 @@ export async function removeAttributeValue(
 
     if (
       !value ||
-      value.attribute_id !== attributeId
+      value.product_attribute_id !== attributeId
     ) {
       throwNotFound(
         "Attribute value not found.",
@@ -1603,53 +1685,83 @@ export async function removeAttributeValue(
     );
   });
 }
+/* =========================================================
+   PUBLIC PRODUCT SERVICE
+========================================================= */
 
+/**
+ * جلب المنتج النشط مع الصور والخصائص والمتغيرات.
+ *
+ * هذه البيانات تستخدم في صفحة المنتج العامة.
+ */
 export async function getProductById(id: string) {
-  // 1. جلب المنتج الأساسي
   const product = await findActiveProductById(id);
 
   if (!product) {
     return null;
   }
 
-  // 2. جلب الصور والمتغيرات وخيارات الخصائص بالتوازي
-  const [images, variants, attributeOptions] = await Promise.all([
+  const [
+    images,
+    variants,
+    attributeOptions,
+  ] = await Promise.all([
     findProductImages(product.id),
     findActiveProductVariants(product.id),
     findProductAttributeOptions(product.id),
   ]);
 
-  // 3. جلب خصائص المتغيرات الفعلية
   const variantAttributes = await findVariantAttributes(
     variants.map((variant) => variant.id)
   );
 
-  // 4. ربط الخصائص بكل متغير
+  /**
+   * ربط الخصائص بكل متغير.
+   */
   const variantsWithAttributes = variants.map((variant) => ({
     ...variant,
 
-    // استخدام سعر المتغير إن وُجد، وإلا سعر المنتج
     price: variant.price ?? product.price,
 
     attributes: variantAttributes
-      .filter((attribute) => attribute.variant_id === variant.id)
+      .filter(
+        (attribute) =>
+          attribute.variant_id === variant.id
+      )
       .map((attribute) => ({
         id: attribute.attribute_id,
         name: attribute.attribute_name,
+        type: attribute.attribute_type,
         value_id: attribute.attribute_value_id,
         value: attribute.attribute_value,
+        color_code: attribute.color_code,
+        image_url: attribute.image_url,
       })),
   }));
 
-  // 5. تجميع خيارات الخصائص حسب الخاصية
+  /**
+   * تجميع خيارات الخصائص حسب الخاصية.
+   *
+   * مثال:
+   * Color:
+   *   Red
+   *   Blue
+   *
+   * Size:
+   *   M
+   *   L
+   */
   const attributesMap = new Map<
     string,
     {
       id: string;
       name: string;
+      type: string;
       values: {
         id: string;
         value: string;
+        color_code: string | null;
+        image_url: string | null;
       }[];
     }
   >();
@@ -1659,26 +1771,30 @@ export async function getProductById(id: string) {
       attributesMap.set(option.attribute_id, {
         id: option.attribute_id,
         name: option.attribute_name,
+        type: option.attribute_type,
         values: [],
       });
     }
 
-    const attribute = attributesMap.get(option.attribute_id)!;
+    const attribute = attributesMap.get(
+      option.attribute_id
+    )!;
 
-    // تجنب إضافة القيمة نفسها أكثر من مرة
-    if (
-      !attribute.values.some(
-        (value) => value.id === option.attribute_value_id
-      )
-    ) {
+    const alreadyExists = attribute.values.some(
+      (value) =>
+        value.id === option.attribute_value_id
+    );
+
+    if (!alreadyExists) {
       attribute.values.push({
         id: option.attribute_value_id,
         value: option.attribute_value,
+        color_code: option.color_code,
+        image_url: option.image_url,
       });
     }
   }
 
-  // 6. إرجاع بيانات المنتج للواجهة
   return {
     ...product,
     images,

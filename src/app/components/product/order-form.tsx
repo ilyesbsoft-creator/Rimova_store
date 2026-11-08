@@ -1,12 +1,12 @@
-
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import type { getDeliveryOptions } from "@/backend/modules/delivery/delivery.service";
 import type { getProductById } from "@/backend/modules/products/product.service";
-import { House, MapPin } from "lucide-react";
+import { House, MapPin, X, Images, Check } from "lucide-react";
+import Image from "next/image";
 
 type DeliveryOptions = NonNullable<
   Awaited<ReturnType<typeof getDeliveryOptions>>
@@ -70,10 +70,35 @@ export default function OrderForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderNumber, setOrderNumber] = useState("");
 
+  // التحكم في نافذة اختيار المتغيرات بالصور.
+  const [isVariantGalleryOpen, setIsVariantGalleryOpen] =
+    useState(false);
+
   const hasVariants = variants.length > 0;
   const hasAttributes = attributes.length > 0;
 
-  // لا نعرض إلا الخصائص التي تستخدمها المتغيرات النشطة فعلًا.
+  // إغلاق النافذة باستخدام Escape ومنع تمرير الصفحة خلفها.
+  useEffect(() => {
+    if (!isVariantGalleryOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsVariantGalleryOpen(false);
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isVariantGalleryOpen]);
+
+  // لا نعرض إلا الخصائص التي تستخدمها المتغيرات فعلًا.
   const availableAttributes = useMemo(
     () =>
       attributes
@@ -91,6 +116,16 @@ export default function OrderForm({
         }))
         .filter((attribute) => attribute.values.length > 0),
     [attributes, variants],
+  );
+
+  // المتغيرات المتوفرة في المخزون لعرضها في معرض الصور.
+  const availableImageVariants = useMemo(
+    () =>
+      variants.filter(
+        (variant) =>
+          Math.max(0, Number(variant.stock_quantity) || 0) > 0,
+      ),
+    [variants],
   );
 
   // البحث عن المتغير الفعلي المطابق لجميع اختيارات المستخدم.
@@ -198,14 +233,47 @@ export default function OrderForm({
       return;
     }
 
-    setSelectedAttributeValues((current) => ({
-      ...current,
-      [attributeId]: valueId,
-    }));
+    setSelectedAttributeValues((current) => {
+      // إذا كانت القيمة محددة بالفعل، نلغي تحديدها.
+      if (current[attributeId] === valueId) {
+        const updated = { ...current };
+        delete updated[attributeId];
+        return updated;
+      }
+
+      // وإلا نحدد القيمة الجديدة.
+      return {
+        ...current,
+        [attributeId]: valueId,
+      };
+    });
 
     setQuantity(1);
     setFeedback("");
     setOrderNumber("");
+  }
+
+  // تحديد المتغير مباشرة من خلال الضغط على صورته.
+  function handleVariantImageSelect(variantId: string) {
+    const variant = availableImageVariants.find(
+      (item) => item.id === variantId,
+    );
+
+    if (!variant) return;
+
+    const nextSelections: SelectedAttributeValues = {};
+
+    for (const attribute of variant.attributes) {
+      nextSelections[attribute.id] = attribute.value_id;
+    }
+
+    setSelectedAttributeValues(nextSelections);
+    setQuantity(1);
+    setFeedback("");
+    setOrderNumber("");
+
+    // إغلاق نافذة الصور بعد اختيار المتغير.
+    setIsVariantGalleryOpen(false);
   }
 
   // الولاية المختارة.
@@ -270,7 +338,6 @@ export default function OrderForm({
   function handleDeliveryMethodChange(method: DeliveryMethod) {
     setDeliveryMethod(method);
 
-    // مسح الاختيارات المرتبطة بطريقة التوصيل السابقة.
     setCommuneId("");
     setSelectedOfficeId("");
     setDeliveryAddress("");
@@ -281,7 +348,6 @@ export default function OrderForm({
   function handleWilayaChange(nextWilayaId: string) {
     setWilayaId(nextWilayaId);
 
-    // لا نحتفظ ببلدية أو مكتب من ولاية سابقة.
     setCommuneId("");
     setSelectedOfficeId("");
 
@@ -340,13 +406,11 @@ export default function OrderForm({
       return;
     }
 
-    // في التوصيل إلى المنزل يجب اختيار البلدية.
     if (deliveryMethod === "home" && !selectedCommune) {
       setFeedback("يرجى اختيار البلدية.");
       return;
     }
 
-    // في الاستلام من المكتب يجب اختيار مكتب محدد.
     if (deliveryMethod === "office" && !selectedOffice) {
       setFeedback("يرجى اختيار مكتب الاستلام.");
       return;
@@ -374,7 +438,6 @@ export default function OrderForm({
 
           wilaya_id: wilayaId,
 
-          // البلدية مطلوبة للتوصيل إلى المنزل فقط.
           ...(deliveryMethod === "home"
             ? { commune_id: communeId }
             : {}),
@@ -384,7 +447,6 @@ export default function OrderForm({
           delivery_method:
             deliveryMethod === "home" ? "HOME" : "OFFICE",
 
-          // العنوان التفصيلي اختياري في التوصيل إلى المنزل.
           ...(deliveryMethod === "home"
             ? {
                 delivery_address: deliveryAddress.trim() || null,
@@ -432,13 +494,11 @@ export default function OrderForm({
 
       const createdOrderNumber = result.order_number;
 
-      // إعادة النموذج إلى حالته الافتراضية بعد نجاح الطلب.
       resetOrderForm();
 
       setOrderNumber(createdOrderNumber);
       setFeedback("تم إنشاء طلبك بنجاح!");
 
-      // إعادة جلب بيانات صفحة المنتج من الخادم.
       router.refresh();
     } catch (error) {
       console.error("Failed to submit order:", error);
@@ -567,7 +627,21 @@ export default function OrderForm({
                                     : "border-[#d9d6cb] bg-white text-[#35372e] hover:border-[#85816d]"
                                 }`}
                               >
-                                {value.value}
+                                <span className="inline-flex items-center gap-2">
+                                  {value.value}
+
+                                  {attribute.type === "color" &&
+                                    value.color_code && (
+                                      <span
+                                        aria-hidden="true"
+                                        className="h-6 w-6 shrink-0 rounded-full border border-black/15 shadow-inner"
+                                        style={{
+                                          backgroundColor: value.color_code,
+                                        }}
+                                      />
+                                    )}
+                                </span>
+
                                 {!isAvailable && (
                                   <span className="sr-only">
                                     {" "}
@@ -589,45 +663,122 @@ export default function OrderForm({
                     </p>
                   )}
 
+                  {/* زر فتح معرض الصور - لا يعرض الصور داخل الصفحة */}
+                  {availableImageVariants.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setIsVariantGalleryOpen(true)}
+                      className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-[#d9d6cb] bg-white p-4 text-right transition duration-200 hover:border-[#85816d] hover:bg-[#e9e6dd]/30 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#85816d]/15"
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#e9e6dd] text-[#85816d] transition group-hover:bg-[#85816d] group-hover:text-white">
+                          <Images size={21} strokeWidth={1.8} />
+                        </span>
+
+                        <span className="min-w-0">
+                          <span className="block text-sm font-bold text-[#35372e]">
+                            الاختيار بواسطة الصور
+                          </span>
+                          <span className="mt-1 block text-xs text-gray-500">
+                            {selectedVariant
+                              ? "يمكنك تغيير الخيار المختار من الصور"
+                              : "تصفح الصور واختر الموديل المناسب"}
+                          </span>
+                        </span>
+                      </span>
+
+                      <span className="shrink-0 text-xs font-semibold text-[#85816d] transition group-hover:translate-x-[-2px]">
+                        عرض الخيارات ←
+                      </span>
+                    </button>
+                  )}
+
+                  {/* تفاصيل المتغير المختار */}
                   {selectedVariant ? (
                     <div
                       aria-live="polite"
-                      className="rounded-2xl border border-[#d9d6cb] bg-white p-4 sm:p-5"
+                      className="overflow-hidden rounded-2xl border border-[#d9d6cb] bg-white"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <p className="text-xs text-gray-500">
-                            الخيار المطابق
-                          </p>
-                          <p className="mt-1 font-bold">
-                            {selectedVariant.attributes
-                              .map(
-                                (attribute) =>
-                                  `${attribute.name}: ${attribute.value}`,
-                              )
-                              .join(" · ")}
-                          </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)]">
+                        <div className="relative aspect-square w-full overflow-hidden bg-[#e9e6dd]/50 sm:aspect-auto sm:min-h-36">
+                          {selectedVariant.image_url ? (
+                            <Image
+                              src={selectedVariant.image_url}
+                              alt={`${productName} - ${selectedVariant.attributes
+                                .map((attribute) => attribute.value)
+                                .join(" - ")}`}
+                              fill
+                              unoptimized
+                              sizes="(max-width: 640px) 100vw, 144px"
+                              className="object-contain p-4"
+                            />
+                          ) : (
+                            <div className="flex h-full min-h-36 items-center justify-center">
+                              <div className="text-center">
+                                <span className="text-3xl text-[#85816d]">
+                                  ◇
+                                </span>
+                                <p className="mt-2 text-xs text-gray-400">
+                                  لا توجد صورة لهذا الخيار
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
 
-                        <div className="text-left">
-                          <p className="font-black text-[#77735f]">
-                            {formatPrice(unitPrice)}
-                          </p>
-                          <p className="mt-1 text-xs text-gray-500">
-                            {availableStock} قطعة متوفرة
-                          </p>
+                        <div className="flex min-w-0 flex-col justify-center p-4 sm:p-5">
+                          <div>
+                            <p className="text-xs font-semibold text-[#85816d]">
+                              الخيار المختار
+                            </p>
+
+                            <p className="mt-2 font-bold leading-7 text-[#252720]">
+                              {selectedVariant.attributes
+                                .map(
+                                  (attribute) =>
+                                    `${attribute.name}: ${attribute.value}`,
+                                )
+                                .join(" · ")}
+                            </p>
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-black/5 pt-4">
+                            <div>
+                              <p className="text-xs text-gray-500">
+                                سعر القطعة
+                              </p>
+                              <p className="mt-1 font-black text-[#77735f]">
+                                {formatPrice(unitPrice)}
+                              </p>
+                            </div>
+
+                            <div className="text-left">
+                              <p className="text-xs text-gray-500">
+                                المخزون المتوفر
+                              </p>
+                              <p className="mt-1 text-sm font-bold">
+                                {availableStock} قطعة
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex items-center gap-2 text-xs font-medium text-green-700">
+                            <span className="h-2 w-2 rounded-full bg-green-600" />
+                            تم تحديد هذا الخيار بنجاح
+                          </div>
                         </div>
                       </div>
                     </div>
                   ) : (
                     <p className="text-xs leading-6 text-gray-500">
-                      اختر قيمة لكل خاصية. ستُحدَّد تركيبة المنتج وسعرها
-                      ومخزونها تلقائيًا عند اكتمال اختياراتك.
+                      اختر قيمة لكل خاصية أو استخدم الاختيار بواسطة الصور.
+                      سيتم تحديث السعر والمخزون والصورة تلقائيًا.
                     </p>
                   )}
                 </div>
               )}
 
+              {/* الكمية */}
               <div className="rounded-2xl border border-[#d9d6cb] bg-white p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
@@ -843,7 +994,7 @@ export default function OrderForm({
                 </div>
               ) : (
                 <>
-                  {/* أولًا: اختيار طريقة التوصيل */}
+                  {/* اختيار طريقة التوصيل */}
                   <div>
                     <p className={labelClassName}>
                       طريقة التوصيل{" "}
@@ -863,15 +1014,15 @@ export default function OrderForm({
                             : "border-[#d9d6cb] bg-white hover:border-[#b5b09f]"
                         }`}
                       >
-<span className="flex items-center justify-between gap-3">
-  <span className="flex items-center gap-2 font-bold">
-    <House
-      size={25}
-      strokeWidth={2}
-      className="text-[#85816d]"
-    />
-    التوصيل إلى المنزل
-  </span>
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="flex items-center gap-2 font-bold">
+                            <House
+                              size={25}
+                              strokeWidth={2}
+                              className="text-[#85816d]"
+                            />
+                            التوصيل إلى المنزل
+                          </span>
                           <span
                             className={`flex h-5 w-5 items-center justify-center rounded-full border ${
                               deliveryMethod === "home"
@@ -903,15 +1054,15 @@ export default function OrderForm({
                             : "border-[#d9d6cb] bg-white hover:border-[#b5b09f]"
                         }`}
                       >
-<span className="flex items-center justify-between gap-3">
-  <span className="flex items-center gap-2 font-bold">
-    <MapPin
-      size={25}
-      strokeWidth={2}
-      className="text-[#85816d]"
-    />
-    الاستلام من المكتب
-  </span>
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="flex items-center gap-2 font-bold">
+                            <MapPin
+                              size={25}
+                              strokeWidth={2}
+                              className="text-[#85816d]"
+                            />
+                            الاستلام من المكتب
+                          </span>
                           <span
                             className={`flex h-5 w-5 items-center justify-center rounded-full border ${
                               deliveryMethod === "office"
@@ -932,7 +1083,7 @@ export default function OrderForm({
                     </div>
                   </div>
 
-                  {/* ثانيًا: اختيار الولاية */}
+                  {/* اختيار الولاية */}
                   <div className="mt-6">
                     <label
                       htmlFor="delivery-wilaya"
@@ -960,7 +1111,7 @@ export default function OrderForm({
                     </select>
                   </div>
 
-                  {/* ثالثًا: تفاصيل التوصيل إلى المنزل */}
+                  {/* تفاصيل التوصيل إلى المنزل */}
                   {deliveryMethod === "home" && selectedWilaya && (
                     <div className="mt-5 space-y-5">
                       <div>
@@ -1026,7 +1177,7 @@ export default function OrderForm({
                     </div>
                   )}
 
-                  {/* ثالثًا: اختيار مكتب من جميع مكاتب الولاية */}
+                  {/* اختيار مكتب الاستلام */}
                   {deliveryMethod === "office" && selectedWilaya && (
                     <div className="mt-5">
                       <p className={labelClassName}>
@@ -1065,7 +1216,6 @@ export default function OrderForm({
                                   <span className="font-bold">
                                     {office.name}
                                   </span>
-
                                   <span
                                     className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
                                       isSelected
@@ -1247,6 +1397,161 @@ export default function OrderForm({
           </form>
         </motion.div>
       </div>
+
+      {/* نافذة اختيار المتغيرات بالصور */}
+      {isVariantGalleryOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-[#252720]/65 p-3 backdrop-blur-sm sm:p-6"
+          onClick={() => setIsVariantGalleryOpen(false)}
+          role="presentation"
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="variant-gallery-title"
+            onClick={(event) => event.stopPropagation()}
+            className="flex max-h-[90dvh] w-full max-w-3xl flex-col overflow-hidden rounded-[1.75rem] border border-white/70 bg-[#faf9f6] shadow-[0_25px_100px_rgba(0,0,0,0.25)]"
+          >
+            {/* رأس النافذة */}
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-black/5 px-5 py-5 sm:px-7 sm:py-6">
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.2em] text-[#85816d]">
+                  RIMOVA · SELECT YOUR STYLE
+                </p>
+
+                <h3
+                  id="variant-gallery-title"
+                  className="mt-2 text-lg font-black text-[#252720] sm:text-xl"
+                >
+                  اختر الموديل المناسب لك
+                </h3>
+
+                <p className="mt-1 text-xs leading-6 text-gray-500">
+                  اضغط على الصورة لاختيار المتغير وتحديث خصائص المنتج تلقائيًا.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsVariantGalleryOpen(false)}
+                aria-label="إغلاق نافذة الصور"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d9d6cb] bg-white text-[#55574c] transition hover:border-[#85816d] hover:bg-[#e9e6dd] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#85816d]/20"
+              >
+                <X size={19} />
+              </button>
+            </div>
+
+            {/* محتوى النافذة */}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
+              {availableImageVariants.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+                  {availableImageVariants.map((variant) => {
+                    const isSelected =
+                      selectedVariant?.id === variant.id;
+
+                    const variantDescription =
+                      variant.attributes
+                        .map((attribute) => attribute.value)
+                        .join(" · ");
+
+                    return (
+                      <button
+                        key={variant.id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() =>
+                          handleVariantImageSelect(variant.id)
+                        }
+                        className={`group overflow-hidden rounded-2xl border text-right transition duration-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#85816d]/20 ${
+                          isSelected
+                            ? "border-[#85816d] bg-[#e9e6dd]/60 ring-2 ring-[#85816d]/20"
+                            : "border-[#d9d6cb] bg-white hover:border-[#85816d] hover:shadow-md"
+                        }`}
+                      >
+                        {/* صورة المتغير */}
+                        <div className="relative aspect-square w-full overflow-hidden bg-[#e9e6dd]/40">
+                          {variant.image_url ? (
+                            <Image
+                              src={variant.image_url}
+                              alt={`${productName} - ${variantDescription}`}
+                              fill
+                              unoptimized
+                              sizes="(max-width: 640px) 50vw, 220px"
+                              className="object-contain p-3 transition duration-300 group-hover:scale-105"
+                            />
+                          ) : (
+                            <div className="flex h-full flex-col items-center justify-center">
+                              <span className="text-4xl text-[#85816d]">
+                                ◇
+                              </span>
+                              <span className="mt-2 text-xs text-gray-400">
+                                لا توجد صورة
+                              </span>
+                            </div>
+                          )}
+
+                          {isSelected && (
+                            <span className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-[#85816d] text-white shadow-md">
+                              <Check size={16} strokeWidth={2.5} />
+                            </span>
+                          )}
+                        </div>
+
+                        {/* معلومات المتغير */}
+                        <div className="p-3 sm:p-4">
+                          <p className="line-clamp-2 min-h-10 text-xs font-bold leading-5 text-[#35372e] sm:text-sm">
+                            {variantDescription || "خيار المنتج"}
+                          </p>
+
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-black/5 pt-3">
+                            <span className="text-sm font-black text-[#77735f]">
+                              {formatPrice(
+                                Number(variant.price ?? productPrice),
+                              )}
+                            </span>
+
+                            <span className="text-[10px] text-gray-500 sm:text-xs">
+                              متوفر: {variant.stock_quantity}
+                            </span>
+                          </div>
+
+                          {isSelected && (
+                            <p className="mt-3 text-xs font-bold text-[#77735f]">
+                              هذا هو اختيارك الحالي
+                            </p>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-[#d9d6cb] bg-white p-5 text-center text-sm text-gray-500">
+                  لا توجد خيارات متوفرة حاليًا.
+                </p>
+              )}
+            </div>
+
+            {/* أسفل النافذة */}
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-black/5 bg-white/70 px-5 py-4 sm:px-7">
+              <p className="text-xs text-gray-500">
+                {availableImageVariants.length} خيارات متوفرة
+              </p>
+
+              <button
+                type="button"
+                onClick={() => setIsVariantGalleryOpen(false)}
+                className="rounded-full bg-[#252720] px-6 py-3 text-xs font-bold text-white transition hover:bg-[#414438] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#85816d]/30"
+              >
+                إغلاق
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </section>
   );
 }

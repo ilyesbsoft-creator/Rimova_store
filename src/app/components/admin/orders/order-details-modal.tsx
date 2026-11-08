@@ -1,6 +1,7 @@
 
 "use client";
 
+import Image from "next/image";
 import {
   useCallback,
   useEffect,
@@ -580,19 +581,22 @@ function ProductVariantSelector({
     [onQuantityChange],
   );
 
-  function handleAttributeChange(attributeId: string, valueId: string) {
-    if (!isAttributeValueAvailable(attributeId, valueId)) return;
+function handleAttributeChange(attributeId: string, valueId: string) {
+  if (!isAttributeValueAvailable(attributeId, valueId)) return;
 
-    const next = {
-      ...selectedAttributeValues,
-      [attributeId]: valueId,
-    };
+  const next = { ...selectedAttributeValues };
 
-    setSelectedAttributeValues(next);
-
-    setQuantity(1);
-    onQuantityChange(1);
+  if (next[attributeId] === valueId) {
+    delete next[attributeId];
+  } else {
+    next[attributeId] = valueId;
   }
+
+  setSelectedAttributeValues(next);
+
+  setQuantity(1);
+  onQuantityChange(1);
+}
 
   useEffect(() => {
     if (!hasVariants) {
@@ -673,8 +677,21 @@ function ProductVariantSelector({
                         : "border-[#eeeae1] bg-[#faf9f6] text-[#c4c0b5] line-through opacity-60"
                   }`}
                 >
-                  {isSelected && <Check className="h-3.5 w-3.5" />}
-                  {value.value}
+{isSelected && <Check className="h-3.5 w-3.5" />}
+
+<span className="inline-flex items-center gap-2">
+  {value.value}
+
+  {attribute.type === "color" && value.color_code && (
+    <span
+      aria-hidden="true"
+      className="h-4 w-4 shrink-0 rounded-full border border-black/15 shadow-inner"
+      style={{
+        backgroundColor: value.color_code,
+      }}
+    />
+  )}
+</span>
                 </button>
               );
             })}
@@ -684,60 +701,90 @@ function ProductVariantSelector({
 
       {hasVariants && (
         <div className="overflow-hidden rounded-2xl border border-[#e9e6dd] bg-[#faf9f6]">
-          {selectedVariant ? (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e9e6dd] px-4 py-4">
-                <div className="min-w-0">
-                  <p className="text-xs text-[#85816d]">التركيبة المختارة</p>
-                  <p className="mt-1 font-bold text-[#252720]">
-                    {(selectedVariant.attribute_values ?? [])
-                      .map(
-                        (attribute) =>
-                          `${attribute.attribute_name}: ${attribute.attribute_value}`,
-                      )
-                      .join(" · ")}
-                  </p>
-                </div>
+{selectedVariant ? (
+  <div className="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)]">
+    {/* صورة المتغير */}
+    <div className="relative aspect-square w-full overflow-hidden bg-white sm:aspect-auto sm:min-h-36">
+      {selectedVariant.image_url ? (
+        <Image
+          src={selectedVariant.image_url}
+          alt={`${product.name} - ${(selectedVariant.attribute_values ?? [])
+            .map((attribute) => attribute.attribute_value)
+            .join(" - ")}`}
+          fill
+          unoptimized
+          sizes="(max-width: 640px) 100vw, 144px"
+          className="object-contain p-4"
+        />
+      ) : (
+        <div className="flex h-full min-h-36 flex-col items-center justify-center text-[#85816d]">
+          <Package className="h-8 w-8" />
+          <p className="mt-2 text-xs text-gray-400">
+            لا توجد صورة لهذا الخيار
+          </p>
+        </div>
+      )}
+    </div>
 
-                <span className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#69654f] ring-1 ring-[#e5e2d9]">
-                  {selectedVariant.sku
-                    ? `SKU: ${selectedVariant.sku}`
-                    : "متغير محدد"}
-                </span>
-              </div>
+    {/* تفاصيل المتغير */}
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e9e6dd] px-4 py-4">
+        <div className="min-w-0">
+          <p className="text-xs text-[#85816d]">
+            التركيبة المختارة
+          </p>
 
-              <div className="grid grid-cols-2 divide-x divide-x-reverse divide-[#e9e6dd]">
-                <div className="p-4">
-                  <p className="text-xs text-[#85816d]">سعر الوحدة</p>
-                  <p className="mt-1 text-lg font-black text-[#252720]">
-                    {formatMoney(unitPrice)}
-                  </p>
-                </div>
+          <p className="mt-1 font-bold leading-7 text-[#252720]">
+            {(selectedVariant.attribute_values ?? [])
+              .map(
+                (attribute) =>
+                  `${attribute.attribute_name}: ${attribute.attribute_value}`,
+              )
+              .join(" · ")}
+          </p>
+        </div>
 
-                <div className="p-4">
-                  <p className="text-xs text-[#85816d]">
-                    المخزون المتاح
-                  </p>
-                  <p className="mt-1 text-lg font-black text-[#252720]">
-                    {availableStock} قطعة
-                  </p>
-                  {reservedVariantId === selectedVariant.id &&
-                    reservedQuantity > 0 && (
-                      <p className="mt-1 text-[11px] text-[#85816d]">
-                        يشمل {reservedQuantity} قطعة من هذا الطلب
-                      </p>
-                    )}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-start gap-3 p-4">
-              <Boxes className="mt-0.5 h-5 w-5 shrink-0 text-[#85816d]" />
-              <p className="text-sm leading-6 text-[#85816d]">
-                اختر قيمة لكل خاصية لتحديد المتغير المطابق وسعره ومخزونه.
+        <span className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#69654f] ring-1 ring-[#e5e2d9]">
+          {selectedVariant.sku
+            ? `SKU: ${selectedVariant.sku}`
+            : "متغير محدد"}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 divide-x divide-x-reverse divide-[#e9e6dd]">
+        <div className="p-4">
+          <p className="text-xs text-[#85816d]">سعر الوحدة</p>
+          <p className="mt-1 text-lg font-black text-[#252720]">
+            {formatMoney(unitPrice)}
+          </p>
+        </div>
+
+        <div className="p-4">
+          <p className="text-xs text-[#85816d]">
+            المخزون المتاح
+          </p>
+          <p className="mt-1 text-lg font-black text-[#252720]">
+            {availableStock} قطعة
+          </p>
+
+          {reservedVariantId === selectedVariant.id &&
+            reservedQuantity > 0 && (
+              <p className="mt-1 text-[11px] text-[#85816d]">
+                يشمل {reservedQuantity} قطعة من هذا الطلب
               </p>
-            </div>
-          )}
+            )}
+        </div>
+      </div>
+    </div>
+  </div>
+) : (
+  <div className="flex items-start gap-3 p-4">
+    <Boxes className="mt-0.5 h-5 w-5 shrink-0 text-[#85816d]" />
+    <p className="text-sm leading-6 text-[#85816d]">
+      اختر قيمة لكل خاصية لتحديد المتغير المطابق وسعره ومخزونه وصورته.
+    </p>
+  </div>
+)}
         </div>
       )}
 

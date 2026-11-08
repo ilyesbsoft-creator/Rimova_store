@@ -1,9 +1,8 @@
-
 "use client";
-
 
 import Link from "next/link";
 import { Tags } from "lucide-react";
+import { apiRequest } from "@/lib/admin/api-request";
 
 import {
   useCallback,
@@ -83,7 +82,6 @@ const initialFilters: Filters = {
   sort_order: "desc",
 };
 
-
 type ProductImage = {
   id: string;
   image_url: string;
@@ -92,18 +90,29 @@ type ProductImage = {
   is_primary: boolean | number;
 };
 
+type GlobalAttribute = {
+  id: string;
+  name: string;
+  type: "color" | "select" | "text" | "number" | "textarea" | string;
+};
+
+// قيمة الخاصية: لا تحتوي على صورة (الصور تخص المنتج والمتغيرات فقط).
 type ValueDraft = {
   key: string;
   id?: string;
   value: string;
-  original?: string;
+  color_code: string;
+  // قيمة قديمة محفوظة بصورة: نمسح الصورة منها عند الحفظ.
+  legacyImage?: boolean;
+  original?: { value: string; color_code: string };
 };
 
 type AttributeDraft = {
   key: string;
   id?: string;
+  global_attribute_id: string;
   name: string;
-  original?: string;
+  type: GlobalAttribute["type"];
   values: ValueDraft[];
 };
 
@@ -114,6 +123,9 @@ type VariantDraft = {
   price: string;
   stock_quantity: string;
   is_active: boolean;
+  // مرجع صورة المتغير: واحدة من صور المنتج فقط ("" = بدون صورة).
+  // img:<id> صورة محفوظة | file:<key> ملف قيد الرفع | url:<key> رابط قيد الإضافة
+  image_ref: string;
   // true = SKU يُقترح تلقائيًا من SKU المنتج وقيم الخصائص.
   skuAuto: boolean;
   // attribute key -> value key
@@ -125,6 +137,7 @@ type VariantDraft = {
     price: string;
     stock_quantity: string;
     is_active: boolean;
+    image_ref: string;
   };
 };
 
@@ -137,6 +150,14 @@ type PendingFile = {
 type PendingUrl = {
   key: string;
   url: string;
+};
+
+// خيار صورة يمكن اختياره لمتغير.
+type ImageOption = {
+  ref: string;
+  preview: string;
+  label: string;
+  isNew: boolean;
 };
 
 type RemovedState = {
@@ -163,7 +184,7 @@ function newKey(prefix: string) {
 }
 
 function makeValueDraft(value = ""): ValueDraft {
-  return { key: newKey("val"), value };
+  return { key: newKey("val"), value, color_code: "" };
 }
 
 function makeVariantDraft(
@@ -175,6 +196,7 @@ function makeVariantDraft(
     price: "",
     stock_quantity: "0",
     is_active: true,
+    image_ref: "",
     skuAuto: true,
     selection,
     selectionTouched: true,
@@ -299,52 +321,6 @@ function extractData<T>(payload: any): T {
       ? payload.data
       : payload
   ) as T;
-}
-
-
-async function apiRequest<T>(
-  url: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const response = await fetch(url, {
-    ...options,
-    credentials: "same-origin",
-    headers: {
-      ...(options.body instanceof FormData
-        ? {}
-        : { "Content-Type": "application/json" }),
-      ...options.headers,
-    },
-  });
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    const fieldErrors = payload?.errors?.fieldErrors;
-
-    const details =
-      fieldErrors && typeof fieldErrors === "object"
-        ? Object.entries(fieldErrors)
-            .map(
-              ([field, messages]) =>
-                `${field}: ${
-                  Array.isArray(messages)
-                    ? messages.join(", ")
-                    : String(messages)
-                }`,
-            )
-            .join(" | ")
-        : "";
-
-    const message =
-      payload?.message ||
-      payload?.error?.message ||
-      "حدث خطأ أثناء تنفيذ العملية.";
-
-    throw new Error(details ? `${message} (${details})` : message);
-  }
-
-  return payload as T;
 }
 
 function formatPrice(value: number | string) {
@@ -503,9 +479,89 @@ function Field({
 const inputClass =
   "h-11 w-full rounded-xl border border-black/[0.08] bg-white px-3 text-sm text-[#252720] outline-none transition placeholder:text-gray-300 focus:border-[#85816d] focus:ring-4 focus:ring-[#85816d]/10";
 
+/**
+ * اختيار صورة واحدة للمتغير من صور المنتج فقط (بدون رفع).
+ * نحفظ رابط الصورة المختارة فقط.
+ */
+function VariantImagePicker({
+  options,
+  value,
+  onChange,
+}: {
+  options: ImageOption[];
+  value: string;
+  onChange: (ref: string) => void;
+}) {
+  if (options.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-black/[0.1] bg-white px-3 py-2.5 text-[10px] text-gray-400">
+        أضف صور المنتج في أعلى النافذة أولًا لتتمكن من اختيار صورة لهذا
+        المتغير.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => onChange("")}
+        aria-pressed={value === ""}
+        title="بدون صورة"
+        className={`flex h-14 w-14 items-center justify-center rounded-lg border text-[9px] font-semibold transition ${
+          value === ""
+            ? "border-[#252720] bg-white text-[#252720] ring-2 ring-[#252720]/15"
+            : "border-dashed border-black/[0.15] bg-white text-gray-400 hover:bg-[#f5f3ed]"
+        }`}
+      >
+        بدون
+      </button>
+
+      {options.map((option) => {
+        const selected = value === option.ref;
+
+        return (
+          <button
+            key={option.ref}
+            type="button"
+            onClick={() => onChange(selected ? "" : option.ref)}
+            aria-pressed={selected}
+            title={option.label}
+            className={`relative h-14 w-14 overflow-hidden rounded-lg border bg-[#f5f3ed] transition ${
+              selected
+                ? "border-[#252720] ring-2 ring-[#252720]/20"
+                : "border-black/[0.08] hover:border-[#85816d]"
+            }`}
+          >
+            <img
+              src={option.preview}
+              alt={option.label}
+              className="h-full w-full object-cover"
+            />
+
+            {option.isNew && (
+              <span className="absolute bottom-0 left-0 right-0 bg-[#85816d]/90 py-px text-center text-[8px] font-bold text-white">
+                جديدة
+              </span>
+            )}
+
+            {selected && (
+              <span className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#252720] text-white">
+                <Icon name="check" size={10} />
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [globalAttributes, setGlobalAttributes] = useState<GlobalAttribute[]>([]);
+  const [globalAttributesLoading, setGlobalAttributesLoading] = useState(false);
 
   const [pagination, setPagination] = useState<Pagination>({
     total: 0,
@@ -582,6 +638,31 @@ export default function ProductsPage() {
     [categories],
   );
 
+  // كل الصور التي يمكن اختيارها لمتغير: المحفوظة + الجديدة في هذه الجلسة.
+  const imageOptions = useMemo<ImageOption[]>(
+    () => [
+      ...existingImages.map((image, index) => ({
+        ref: `img:${image.id}`,
+        preview: image.image_url,
+        label: image.alt_text || `صورة ${index + 1}`,
+        isNew: false,
+      })),
+      ...pendingFiles.map((item) => ({
+        ref: `file:${item.key}`,
+        preview: item.preview,
+        label: item.file.name,
+        isNew: true,
+      })),
+      ...pendingUrls.map((item) => ({
+        ref: `url:${item.key}`,
+        preview: item.url,
+        label: item.url,
+        isNew: true,
+      })),
+    ],
+    [existingImages, pendingFiles, pendingUrls],
+  );
+
   const loadCategories = useCallback(async () => {
     setCategoriesLoading(true);
 
@@ -606,6 +687,30 @@ export default function ProductsPage() {
       setCategories([]);
     } finally {
       setCategoriesLoading(false);
+    }
+  }, []);
+
+  const loadGlobalAttributes = useCallback(async () => {
+    setGlobalAttributesLoading(true);
+    try {
+      const payload = await apiRequest<any>("/api/admin/global-attributes");
+      const result = extractData<any>(payload);
+      const list = Array.isArray(result)
+        ? result
+        : Array.isArray(result?.data)
+          ? result.data
+          : Array.isArray(result?.attributes)
+            ? result.attributes
+            : Array.isArray(result?.global_attributes)
+              ? result.global_attributes
+              : [];
+      setGlobalAttributes(list.filter((item: any) => item?.id && item?.name));
+    } catch (error) {
+      console.error("Global attributes loading error:", error);
+      setGlobalAttributes([]);
+      setError(`تعذر تحميل الخصائص العامة: ${getErrorMessage(error)}`);
+    } finally {
+      setGlobalAttributesLoading(false);
     }
   }, []);
 
@@ -670,7 +775,8 @@ export default function ProductsPage() {
 
   useEffect(() => {
     void loadCategories();
-  }, [loadCategories]);
+    void loadGlobalAttributes();
+  }, [loadCategories, loadGlobalAttributes]);
 
   useEffect(() => {
     void loadProducts();
@@ -739,9 +845,13 @@ export default function ProductsPage() {
 
     const details = extractData<any>(payload);
 
-    setExistingImages(
-      Array.isArray(details?.images) ? details.images : [],
-    );
+    const loadedImages: ProductImage[] = Array.isArray(
+      details?.images,
+    )
+      ? details.images
+      : [];
+
+    setExistingImages(loadedImages);
 
     if (imagesOnly) return;
 
@@ -750,22 +860,36 @@ export default function ProductsPage() {
     ).map((attribute: any) => ({
       key: attribute.id,
       id: attribute.id,
+      global_attribute_id: attribute.global_attribute_id ?? "",
       name: attribute.name ?? "",
-      original: attribute.name ?? "",
-      values: (Array.isArray(attribute.values)
-        ? attribute.values
-        : []
-      ).map((value: any) => ({
-        key: value.id,
-        id: value.id,
-        value: value.value ?? "",
-        original: value.value ?? "",
-      })),
+      type: attribute.type ?? "select",
+      values: (Array.isArray(attribute.values) ? attribute.values : []).map((value: any) => {
+        const snapshot = {
+          value: value.value ?? "",
+          color_code: value.color_code ?? "",
+        };
+        return {
+          key: value.id,
+          id: value.id,
+          ...snapshot,
+          legacyImage: Boolean(value.image_url),
+          original: snapshot,
+        };
+      }),
     }));
 
     const loadedVariants: VariantDraft[] = (
       Array.isArray(details?.variants) ? details.variants : []
     ).map((variant: any) => {
+      // نطابق رابط صورة المتغير المحفوظ مع صور المنتج.
+      const matchedImage = variant.image_url
+        ? loadedImages.find(
+            (image) => image.image_url === variant.image_url,
+          )
+        : undefined;
+
+      const imageRef = matchedImage ? `img:${matchedImage.id}` : "";
+
       const snapshot = {
         sku: variant.sku ?? "",
         price:
@@ -774,6 +898,7 @@ export default function ProductsPage() {
             : String(Number(variant.price)),
         stock_quantity: String(variant.stock_quantity ?? 0),
         is_active: isActive(variant.is_active),
+        image_ref: imageRef,
       };
 
       // attribute_values: [{ attribute_id, attribute_value_id, ... }]
@@ -857,6 +982,17 @@ export default function ProductsPage() {
 
   /* ----------------------------- الصور ----------------------------- */
 
+  // عند إزالة صورة جديدة قبل الحفظ نفك ارتباطها من أي متغير اختارها.
+  function clearVariantImageRef(ref: string) {
+    setVariants((current) =>
+      current.map((variant) =>
+        variant.image_ref === ref
+          ? { ...variant, image_ref: "" }
+          : variant,
+      ),
+    );
+  }
+
   function handleFilesSelected(
     event: React.ChangeEvent<HTMLInputElement>,
   ) {
@@ -910,6 +1046,14 @@ export default function ProductsPage() {
       if (target) URL.revokeObjectURL(target.preview);
       return current.filter((item) => item.key !== key);
     });
+    clearVariantImageRef(`file:${key}`);
+  }
+
+  function removePendingUrl(key: string) {
+    setPendingUrls((current) =>
+      current.filter((entry) => entry.key !== key),
+    );
+    clearVariantImageRef(`url:${key}`);
   }
 
   function addPendingUrl() {
@@ -972,6 +1116,21 @@ export default function ProductsPage() {
   async function deleteExistingImage(image: ProductImage) {
     if (!editingProduct || saving) return;
 
+    // لا نحذف صورة مستخدمة في متغير (محفوظ أو مختار حاليًا).
+    const ref = `img:${image.id}`;
+    const usedByVariant = variants.some(
+      (variant) =>
+        variant.image_ref === ref ||
+        variant.original?.image_ref === ref,
+    );
+
+    if (usedByVariant) {
+      setModalError(
+        "هذه الصورة مستخدمة في متغير. غيّر صورة المتغير واحفظ أولًا ثم احذفها.",
+      );
+      return;
+    }
+
     if (!window.confirm("هل تريد حذف هذه الصورة نهائيًا؟")) {
       return;
     }
@@ -996,23 +1155,34 @@ export default function ProductsPage() {
 
   /* ---------------------------- الخصائص ---------------------------- */
 
-  function addAttribute() {
+  function addAttribute(globalAttributeId: string) {
+    const definition = globalAttributes.find((item) => item.id === globalAttributeId);
+    if (!definition || attributes.some((item) => item.global_attribute_id === globalAttributeId)) return;
     setAttributes((current) => [
       ...current,
       {
         key: newKey("attr"),
-        name: "",
+        global_attribute_id: definition.id,
+        name: definition.name,
+        type: definition.type,
         values: [makeValueDraft()],
       },
     ]);
   }
 
-  function updateAttributeName(key: string, name: string) {
-    setAttributes((current) =>
-      current.map((attribute) =>
-        attribute.key === key ? { ...attribute, name } : attribute,
-      ),
-    );
+  function updateValueField(
+    attributeKey: string,
+    valueKey: string,
+    field: "value" | "color_code",
+    nextValue: string,
+  ) {
+    setAttributes((current) => current.map((attribute) =>
+      attribute.key === attributeKey
+        ? { ...attribute, values: attribute.values.map((value) =>
+            value.key === valueKey ? { ...value, [field]: nextValue } : value,
+          ) }
+        : attribute,
+    ));
   }
 
   function removeAttributeDraft(attribute: AttributeDraft) {
@@ -1057,27 +1227,6 @@ export default function ProductsPage() {
           ? {
               ...attribute,
               values: [...attribute.values, makeValueDraft()],
-            }
-          : attribute,
-      ),
-    );
-  }
-
-  function updateValue(
-    attributeKey: string,
-    valueKey: string,
-    text: string,
-  ) {
-    setAttributes((current) =>
-      current.map((attribute) =>
-        attribute.key === attributeKey
-          ? {
-              ...attribute,
-              values: attribute.values.map((value) =>
-                value.key === valueKey
-                  ? { ...value, value: text }
-                  : value,
-              ),
             }
           : attribute,
       ),
@@ -1135,20 +1284,15 @@ export default function ProductsPage() {
     return attributes
       .map((attribute) => ({
         ...attribute,
-        name: attribute.name.trim(),
         values: attribute.values
           .map((value) => ({
             ...value,
             value: value.value.trim(),
+            color_code: value.color_code.trim(),
           }))
           .filter((value) => value.id || value.value),
       }))
-      .filter(
-        (attribute) =>
-          attribute.id ||
-          attribute.name ||
-          attribute.values.length > 0,
-      );
+      .filter((attribute) => attribute.global_attribute_id);
   }
 
   function addVariant() {
@@ -1310,41 +1454,27 @@ export default function ProductsPage() {
   function validateExtras(): string | null {
     const cleaned = getCleanedAttributes();
 
-    const seenNames = new Set<string>();
+    const seenGlobalAttributes = new Set<string>();
 
     for (const attribute of cleaned) {
-      if (!attribute.name) {
-        return "اسم الخاصية مطلوب (أو احذف الخاصية الفارغة).";
-      }
-
-      const lowered = attribute.name.toLowerCase();
-
-      if (seenNames.has(lowered)) {
-        return `الخاصية "${attribute.name}" مكررة.`;
-      }
-
-      seenNames.add(lowered);
-
-      if (attribute.values.length === 0) {
-        return `أضف قيمة واحدة على الأقل للخاصية "${attribute.name}".`;
-      }
+      if (!attribute.global_attribute_id) return "اختر خاصية عامة لكل مجموعة خصائص.";
+      if (seenGlobalAttributes.has(attribute.global_attribute_id)) return `الخاصية "${attribute.name}" مضافة أكثر من مرة.`;
+      seenGlobalAttributes.add(attribute.global_attribute_id);
+      if (attribute.values.length === 0) return `أضف قيمة واحدة على الأقل للخاصية "${attribute.name}".`;
 
       const seenValues = new Set<string>();
-
       for (const value of attribute.values) {
-        if (!value.value) {
-          return `توجد قيمة فارغة في الخاصية "${attribute.name}".`;
-        }
-
+        if (!value.value) return `توجد قيمة فارغة في الخاصية "${attribute.name}".`;
         const loweredValue = value.value.toLowerCase();
-
-        if (seenValues.has(loweredValue)) {
-          return `القيمة "${value.value}" مكررة في الخاصية "${attribute.name}".`;
-        }
-
+        if (seenValues.has(loweredValue)) return `القيمة "${value.value}" مكررة في الخاصية "${attribute.name}".`;
         seenValues.add(loweredValue);
+        if (value.color_code && !/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value.color_code)) {
+          return `رمز اللون للقيمة "${value.value}" غير صالح.`;
+        }
       }
     }
+
+    const validRefs = new Set(imageOptions.map((option) => option.ref));
 
     for (const [index, variant] of variants.entries()) {
       const title = getVariantTitle(variant, index);
@@ -1366,6 +1496,10 @@ export default function ProductsPage() {
         }
       } else if (variant.original?.price) {
         return `لا يمكن إزالة سعر المتغير "${title}" بعد تحديده؛ أدخل سعرًا جديدًا.`;
+      }
+
+      if (variant.image_ref && !validRefs.has(variant.image_ref)) {
+        return `صورة المتغير "${title}" لم تعد متاحة. اختر صورة أخرى من صور المنتج.`;
       }
 
       if (
@@ -1528,7 +1662,13 @@ export default function ProductsPage() {
 
       const id = productId as string;
 
-      /* 2) الصور */
+      /* 2) الصور — ونبني خريطة (مرجع الصورة -> رابطها) لاستخدامها في المتغيرات */
+      const imageUrlByRef = new Map<string, string>();
+
+      for (const image of existingImages) {
+        imageUrlByRef.set(`img:${image.id}`, image.image_url);
+      }
+
       if (pendingFiles.length > 0 || pendingUrls.length > 0) {
         stage = "الصور";
 
@@ -1543,15 +1683,48 @@ export default function ProductsPage() {
             "image_urls",
             JSON.stringify(
               pendingUrls.map((item) => ({
+                type: "url",
                 image_url: item.url,
               })),
             ),
           );
         }
 
-        await apiRequest(`/api/admin/products/${id}/images`, {
-          method: "POST",
-          body: formData,
+        const imagesPayload = await apiRequest<any>(
+          `/api/admin/products/${id}/images`,
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
+
+        // الباكند يرتّب الصور: الملفات المرفوعة أولًا ثم الروابط.
+        const savedResult = extractData<any>(imagesPayload);
+        const savedImages: any[] = Array.isArray(savedResult)
+          ? savedResult
+          : Array.isArray(savedResult?.images)
+            ? savedResult.images
+            : [];
+
+        const pendingRefs = [
+          ...pendingFiles.map((item) => `file:${item.key}`),
+          ...pendingUrls.map((item) => `url:${item.key}`),
+        ];
+
+        if (savedImages.length === pendingRefs.length) {
+          pendingRefs.forEach((ref, index) => {
+            const savedUrl = savedImages[index]?.image_url;
+            if (typeof savedUrl === "string" && savedUrl) {
+              imageUrlByRef.set(ref, savedUrl);
+            }
+          });
+        }
+
+        // رابط مباشر معروف مسبقًا إن لم تُرجع الاستجابة الروابط.
+        pendingUrls.forEach((item) => {
+          if (!imageUrlByRef.has(`url:${item.key}`)) {
+            imageUrlByRef.set(`url:${item.key}`, item.url);
+          }
         });
 
         pendingFiles.forEach((item) =>
@@ -1559,9 +1732,26 @@ export default function ProductsPage() {
         );
         setPendingFiles([]);
         setPendingUrls([]);
+
+        // المتغيرات التي اختارت صورة جديدة نحدّث مرجعها لتبقى صالحة إن فشلت مرحلة لاحقة.
+        await loadDetails(id, true);
       }
 
-      /* 3) الخصائص وقيمها */
+      const resolveVariantImageUrl = (variant: VariantDraft) =>
+        variant.image_ref
+          ? (imageUrlByRef.get(variant.image_ref) ?? null)
+          : null;
+
+      // لا نكمل إن اختار متغير صورة جديدة تعذّر معرفة رابطها.
+      for (const variant of variants) {
+        if (variant.image_ref && !resolveVariantImageUrl(variant)) {
+          throw new Error(
+            "تعذر تحديد رابط إحدى الصور المختارة للمتغيرات بعد رفعها. أعد فتح المنتج واختر الصورة من جديد.",
+          );
+        }
+      }
+
+      /* 3) الخصائص وقيمها (بدون صور) */
       stage = "الخصائص";
 
       const valueIdByKey = new Map<string, string>();
@@ -1592,25 +1782,12 @@ export default function ProductsPage() {
             `/api/admin/products/${id}/attributes`,
             {
               method: "POST",
-              body: JSON.stringify({ name: attribute.name }),
+              body: JSON.stringify({ global_attribute_id: attribute.global_attribute_id }),
             },
           );
-
-          attributeId = extractData<any>(payload)?.id as
-            | string
-            | undefined;
-
-          if (!attributeId) {
-            throw new Error("تعذر قراءة معرّف الخاصية الجديدة.");
-          }
-        } else if (attribute.name !== (attribute.original ?? "")) {
-          await apiRequest(
-            `/api/admin/products/${id}/attributes/${attributeId}`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({ name: attribute.name }),
-            },
-          );
+          const createdAttribute = extractData<any>(payload);
+          attributeId = (createdAttribute?.id ?? createdAttribute?.attribute?.id) as string | undefined;
+          if (!attributeId) throw new Error("تعذر قراءة معرّف الخاصية الجديدة.");
         }
 
         for (const value of attribute.values) {
@@ -1619,30 +1796,29 @@ export default function ProductsPage() {
               `/api/admin/products/${id}/attributes/${attributeId}/values`,
               {
                 method: "POST",
-                body: JSON.stringify({ value: value.value }),
+                body: JSON.stringify({
+                  value: value.value,
+                  color_code: value.color_code || null,
+                }),
               },
             );
-
-            const createdValueId = extractData<any>(payload)?.id as
-              | string
-              | undefined;
-
-            if (!createdValueId) {
-              throw new Error("تعذر قراءة معرّف القيمة الجديدة.");
-            }
-
+            const createdValue = extractData<any>(payload);
+            const createdValueId = (createdValue?.id ?? createdValue?.value?.id) as string | undefined;
+            if (!createdValueId) throw new Error("تعذر قراءة معرّف القيمة الجديدة.");
             valueIdByKey.set(value.key, createdValueId);
           } else {
-            if (value.value !== (value.original ?? "")) {
+            const original = value.original ?? { value: "", color_code: "" };
+            const patch: Record<string, unknown> = {};
+            if (value.value !== original.value) patch.value = value.value;
+            if (value.color_code !== original.color_code) patch.color_code = value.color_code || null;
+            // الصور لم تعد تتبع الخصائص: نمسح أي صورة قديمة مرتبطة بالقيمة.
+            if (value.legacyImage) patch.image_url = null;
+            if (Object.keys(patch).length) {
               await apiRequest(
                 `/api/admin/products/${id}/attributes/${attributeId}/values/${value.id}`,
-                {
-                  method: "PATCH",
-                  body: JSON.stringify({ value: value.value }),
-                },
+                { method: "PATCH", body: JSON.stringify(patch) },
               );
             }
-
             valueIdByKey.set(value.key, value.id);
           }
         }
@@ -1677,6 +1853,8 @@ export default function ProductsPage() {
       }
 
       for (const variant of variants) {
+        const imageUrl = resolveVariantImageUrl(variant);
+
         if (variant.id) {
           const original = variant.original;
           const patch: Record<string, unknown> = {};
@@ -1705,6 +1883,11 @@ export default function ProductsPage() {
             patch.is_active = variant.is_active;
           }
 
+          // صورة المتغير: رابط صورة من صور المنتج فقط، أو null لإزالتها.
+          if (variant.image_ref !== (original?.image_ref ?? "")) {
+            patch.image_url = imageUrl;
+          }
+
           if (variant.selectionTouched) {
             patch.attribute_value_ids = selectedValueIds(variant);
           }
@@ -1719,19 +1902,44 @@ export default function ProductsPage() {
             );
           }
         } else {
-          await apiRequest(`/api/admin/products/${id}/variants`, {
-            method: "POST",
-            body: JSON.stringify({
-              sku:
-                getEffectiveSku(variant, cleanedAttributes) || null,
-              ...(variant.price.trim() !== ""
-                ? { price: Number(variant.price) }
-                : {}),
-              stock_quantity: Number(variant.stock_quantity),
-              is_active: variant.is_active,
-              attribute_value_ids: selectedValueIds(variant),
-            }),
-          });
+          const createdPayload = await apiRequest<any>(
+            `/api/admin/products/${id}/variants`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                sku:
+                  getEffectiveSku(variant, cleanedAttributes) || null,
+                ...(variant.price.trim() !== ""
+                  ? { price: Number(variant.price) }
+                  : {}),
+                stock_quantity: Number(variant.stock_quantity),
+                is_active: variant.is_active,
+                ...(imageUrl ? { image_url: imageUrl } : {}),
+                attribute_value_ids: selectedValueIds(variant),
+              }),
+            },
+          );
+
+          // احتياط: إن لم يحفظ الباكند image_url عند الإنشاء نثبّته بطلب تعديل.
+          if (imageUrl) {
+            const createdVariant = extractData<any>(createdPayload);
+            const createdId = (createdVariant?.id ??
+              createdVariant?.variant?.id) as string | undefined;
+            const savedImageUrl =
+              createdVariant?.image_url ??
+              createdVariant?.variant?.image_url ??
+              null;
+
+            if (createdId && savedImageUrl !== imageUrl) {
+              await apiRequest(
+                `/api/admin/products/${id}/variants/${createdId}`,
+                {
+                  method: "PATCH",
+                  body: JSON.stringify({ image_url: imageUrl }),
+                },
+              );
+            }
+          }
         }
       }
 
@@ -1879,44 +2087,44 @@ export default function ProductsPage() {
       className="mx-auto w-full max-w-[1600px] space-y-6"
     >
       {/* Page heading */}
-<div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-  <div>
-    <div className="flex items-center gap-2 text-[11px] text-gray-400">
-      <span>إدارة المتجر</span>
-      <Icon name="chevron" size={13} />
-      <span className="font-semibold text-[#85816d]">
-        المنتجات
-      </span>
-    </div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div>
+          <div className="flex items-center gap-2 text-[11px] text-gray-400">
+            <span>إدارة المتجر</span>
+            <Icon name="chevron" size={13} />
+            <span className="font-semibold text-[#85816d]">
+              المنتجات
+            </span>
+          </div>
 
-    <h1 className="mt-3 text-2xl font-black tracking-tight">
-      المنتجات
-    </h1>
+          <h1 className="mt-3 text-2xl font-black tracking-tight">
+            المنتجات
+          </h1>
 
-    <p className="mt-2 text-xs text-gray-400">
-      إدارة منتجات المتجر ومتابعة الأسعار والمخزون.
-    </p>
-  </div>
+          <p className="mt-2 text-xs text-gray-400">
+            إدارة منتجات المتجر ومتابعة الأسعار والمخزون.
+          </p>
+        </div>
 
-  <div className="flex items-center gap-2">
-    <Link
-      href="/admin/categories"
-      className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#e9e6dd] bg-white px-4 text-xs font-bold text-[#252720] transition hover:bg-[#faf9f6]"
-    >
-      <Tags size={18} />
-      التصنيفات
-    </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/categories"
+            className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#e9e6dd] bg-white px-4 text-xs font-bold text-[#252720] transition hover:bg-[#faf9f6]"
+          >
+            <Tags size={18} />
+            التصنيفات
+          </Link>
 
-    <button
-      type="button"
-      onClick={openCreateModal}
-      className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#252720] px-5 text-xs font-bold text-white shadow-sm transition hover:bg-[#3a3c33]"
-    >
-      <Icon name="plus" size={17} />
-      إضافة منتج جديد
-    </button>
-  </div>
-</div>
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#252720] px-5 text-xs font-bold text-white shadow-sm transition hover:bg-[#3a3c33]"
+          >
+            <Icon name="plus" size={17} />
+            إضافة منتج جديد
+          </button>
+        </div>
+      </div>
 
       {/* Alerts */}
       {error && (
@@ -2453,7 +2661,7 @@ export default function ProductsPage() {
                     : "إضافة منتج جديد"}
                 </h2>
                 <p className="mt-1 text-[11px] text-gray-400">
-                  أدخل المعلومات الأساسية للمنتج.
+                  الترتيب: الصور، ثم معلومات المنتج، ثم الخصائص، ثم المتغيرات.
                 </p>
               </div>
 
@@ -2493,6 +2701,190 @@ export default function ProductsPage() {
                   </div>
                 )}
 
+                {/* ===== 1) الصور ===== */}
+                <div className="space-y-4 rounded-xl border border-black/[0.07] p-4 sm:col-span-2">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold">
+                        صور المنتج
+                      </p>
+                      <p className="mt-1 text-[10px] leading-5 text-gray-400">
+                        ارفع صورًا من جهازك أو أضف روابط خارجية (حتى{" "}
+                        {MAX_IMAGES_PER_REQUEST} صورة في كل حفظ، وبحد
+                        أقصى 10 ميغابايت للصورة). الصورة الرئيسية
+                        الأولى تُحدَّد تلقائيًا. ستختار لاحقًا لكل
+                        متغير صورة من هذه الصور.
+                      </p>
+                    </div>
+
+                    <label className="flex h-9 cursor-pointer items-center gap-2 rounded-xl border border-black/[0.07] px-3 text-[11px] font-semibold text-[#77735f] transition hover:bg-[#f5f3ed]">
+                      <Icon name="image" size={15} />
+                      رفع صور
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={handleFilesSelected}
+                      />
+                    </label>
+                  </div>
+
+                  {(existingImages.length > 0 ||
+                    pendingFiles.length > 0 ||
+                    pendingUrls.length > 0) && (
+                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+                      {existingImages.map((image) => (
+                        <div
+                          key={image.id}
+                          className="overflow-hidden rounded-xl border border-black/[0.06] bg-[#f5f3ed]"
+                        >
+                          <div className="relative aspect-square">
+                            <img
+                              src={image.image_url}
+                              alt={image.alt_text || "صورة المنتج"}
+                              className="h-full w-full object-cover"
+                            />
+
+                            {isActive(image.is_primary) && (
+                              <span className="absolute right-1.5 top-1.5 rounded-full bg-[#252720] px-2 py-0.5 text-[9px] font-bold text-white">
+                                رئيسية
+                              </span>
+                            )}
+
+                            {imageBusyId === image.id && (
+                              <span className="absolute inset-0 flex items-center justify-center bg-white/70">
+                                <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#e5e2d8] border-t-[#85816d]" />
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1 bg-white px-1.5 py-1">
+                            <button
+                              type="button"
+                              onClick={() => void makeImagePrimary(image)}
+                              disabled={
+                                isActive(image.is_primary) ||
+                                imageBusyId !== null ||
+                                saving
+                              }
+                              className="text-[10px] font-semibold text-[#77735f] disabled:opacity-35"
+                            >
+                              جعلها رئيسية
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void deleteExistingImage(image)
+                              }
+                              disabled={imageBusyId !== null || saving}
+                              title="حذف الصورة"
+                              className="rounded-md p-1 text-[#b0786b] hover:bg-red-50 disabled:opacity-35"
+                            >
+                              <Icon name="trash" size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {pendingFiles.map((item) => (
+                        <div
+                          key={item.key}
+                          className="overflow-hidden rounded-xl border border-dashed border-[#85816d]/40 bg-[#f5f3ed]"
+                        >
+                          <div className="relative aspect-square">
+                            <img
+                              src={item.preview}
+                              alt={item.file.name}
+                              className="h-full w-full object-cover"
+                            />
+                            <span className="absolute right-1.5 top-1.5 rounded-full bg-[#85816d] px-2 py-0.5 text-[9px] font-bold text-white">
+                              جديدة
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1 bg-white px-1.5 py-1">
+                            <span className="truncate text-[10px] text-gray-400">
+                              {item.file.name}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removePendingFile(item.key)}
+                              title="إزالة"
+                              className="rounded-md p-1 text-[#b0786b] hover:bg-red-50"
+                            >
+                              <Icon name="close" size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {pendingUrls.map((item) => (
+                        <div
+                          key={item.key}
+                          className="overflow-hidden rounded-xl border border-dashed border-[#85816d]/40 bg-[#f5f3ed]"
+                        >
+                          <div className="relative aspect-square">
+                            <img
+                              src={item.url}
+                              alt="صورة من رابط"
+                              className="h-full w-full object-cover"
+                            />
+                            <span className="absolute right-1.5 top-1.5 rounded-full bg-[#85816d] px-2 py-0.5 text-[9px] font-bold text-white">
+                              رابط
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1 bg-white px-1.5 py-1">
+                            <span
+                              dir="ltr"
+                              className="truncate text-[10px] text-gray-400"
+                            >
+                              {item.url}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removePendingUrl(item.key)}
+                              title="إزالة"
+                              className="rounded-md p-1 text-[#b0786b] hover:bg-red-50"
+                            >
+                              <Icon name="close" size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      dir="ltr"
+                      value={urlInput}
+                      onChange={(event) =>
+                        setUrlInput(event.target.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addPendingUrl();
+                        }
+                      }}
+                      placeholder="https://example.com/image.jpg"
+                      className={`${inputClass} text-left text-xs`}
+                    />
+                    <button
+                      type="button"
+                      onClick={addPendingUrl}
+                      className="h-11 shrink-0 rounded-xl border border-black/[0.08] px-4 text-xs font-semibold text-[#77735f] transition hover:bg-[#f5f3ed]"
+                    >
+                      إضافة رابط
+                    </button>
+                  </div>
+                </div>
+
+                {/* ===== 2) معلومات المنتج ===== */}
                 <Field label="اسم المنتج" required>
                   <input
                     value={form.name}
@@ -2652,298 +3044,67 @@ export default function ProductsPage() {
                   </label>
                 </div>
 
-                {/* ===== الصور ===== */}
+                {/* ===== 3) الخصائص العامة وقيم المنتج (بدون صور) ===== */}
                 <div className="space-y-4 rounded-xl border border-black/[0.07] p-4 sm:col-span-2">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs font-bold">
-                        صور المنتج
-                      </p>
-                      <p className="mt-1 text-[10px] text-gray-400">
-                        ارفع صورًا من جهازك أو أضف روابط خارجية (حتى{" "}
-                        {MAX_IMAGES_PER_REQUEST} صورة في كل حفظ، وبحد
-                        أقصى 10 ميغابايت للصورة). الصورة الرئيسية
-                        الأولى تُحدَّد تلقائيًا.
+                      <p className="text-xs font-bold">خصائص المنتج</p>
+                      <p className="mt-1 text-[10px] leading-5 text-gray-400">
+                        اختر الخصائص من القائمة العامة. اسم الخاصية ونوعها يُداران من صفحة الخصائص العامة، وهنا تضيف قيم هذا المنتج فقط.
                       </p>
                     </div>
-
-                    <label className="flex h-9 cursor-pointer items-center gap-2 rounded-xl border border-black/[0.07] px-3 text-[11px] font-semibold text-[#77735f] transition hover:bg-[#f5f3ed]">
-                      <Icon name="image" size={15} />
-                      رفع صور
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={handleFilesSelected}
-                      />
-                    </label>
+                    <select
+                      value=""
+                      disabled={globalAttributesLoading || globalAttributes.length === 0}
+                      onChange={(event) => { if (event.target.value) addAttribute(event.target.value); }}
+                      className={`${inputClass} h-9 max-w-[230px] text-xs`}
+                    >
+                      <option value="">{globalAttributesLoading ? "جارٍ تحميل الخصائص..." : "إضافة خاصية عامة"}</option>
+                      {globalAttributes
+                        .filter((item) => !attributes.some((attribute) => attribute.global_attribute_id === item.id))
+                        .map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
                   </div>
 
-                  {(existingImages.length > 0 ||
-                    pendingFiles.length > 0 ||
-                    pendingUrls.length > 0) && (
-                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
-                      {existingImages.map((image) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-xl border border-black/[0.06] bg-[#f5f3ed]"
-                        >
-                          <div className="relative aspect-square">
-                            <img
-                              src={image.image_url}
-                              alt={image.alt_text || "صورة المنتج"}
-                              className="h-full w-full object-cover"
-                            />
-
-                            {isActive(image.is_primary) && (
-                              <span className="absolute right-1.5 top-1.5 rounded-full bg-[#252720] px-2 py-0.5 text-[9px] font-bold text-white">
-                                رئيسية
-                              </span>
-                            )}
-
-                            {imageBusyId === image.id && (
-                              <span className="absolute inset-0 flex items-center justify-center bg-white/70">
-                                <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#e5e2d8] border-t-[#85816d]" />
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center justify-between gap-1 bg-white px-1.5 py-1">
-                            <button
-                              type="button"
-                              onClick={() => void makeImagePrimary(image)}
-                              disabled={
-                                isActive(image.is_primary) ||
-                                imageBusyId !== null ||
-                                saving
-                              }
-                              className="text-[10px] font-semibold text-[#77735f] disabled:opacity-35"
-                            >
-                              جعلها رئيسية
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void deleteExistingImage(image)
-                              }
-                              disabled={imageBusyId !== null || saving}
-                              title="حذف الصورة"
-                              className="rounded-md p-1 text-[#b0786b] hover:bg-red-50 disabled:opacity-35"
-                            >
-                              <Icon name="trash" size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-
-                      {pendingFiles.map((item) => (
-                        <div
-                          key={item.key}
-                          className="overflow-hidden rounded-xl border border-dashed border-[#85816d]/40 bg-[#f5f3ed]"
-                        >
-                          <div className="relative aspect-square">
-                            <img
-                              src={item.preview}
-                              alt={item.file.name}
-                              className="h-full w-full object-cover"
-                            />
-                            <span className="absolute right-1.5 top-1.5 rounded-full bg-[#85816d] px-2 py-0.5 text-[9px] font-bold text-white">
-                              جديدة
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-1 bg-white px-1.5 py-1">
-                            <span className="truncate text-[10px] text-gray-400">
-                              {item.file.name}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => removePendingFile(item.key)}
-                              title="إزالة"
-                              className="rounded-md p-1 text-[#b0786b] hover:bg-red-50"
-                            >
-                              <Icon name="close" size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-
-                      {pendingUrls.map((item) => (
-                        <div
-                          key={item.key}
-                          className="overflow-hidden rounded-xl border border-dashed border-[#85816d]/40 bg-[#f5f3ed]"
-                        >
-                          <div className="relative aspect-square">
-                            <img
-                              src={item.url}
-                              alt="صورة من رابط"
-                              className="h-full w-full object-cover"
-                            />
-                            <span className="absolute right-1.5 top-1.5 rounded-full bg-[#85816d] px-2 py-0.5 text-[9px] font-bold text-white">
-                              رابط
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-1 bg-white px-1.5 py-1">
-                            <span
-                              dir="ltr"
-                              className="truncate text-[10px] text-gray-400"
-                            >
-                              {item.url}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setPendingUrls((current) =>
-                                  current.filter(
-                                    (entry) => entry.key !== item.key,
-                                  ),
-                                )
-                              }
-                              title="إزالة"
-                              className="rounded-md p-1 text-[#b0786b] hover:bg-red-50"
-                            >
-                              <Icon name="close" size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                  {globalAttributes.length === 0 && !globalAttributesLoading && (
+                    <p className="rounded-xl bg-[#faf9f6] px-4 py-3 text-[11px] text-gray-500">
+                      لا توجد خصائص عامة. أضف مثل اللون والمقاس من صفحة إدارة الخصائص العامة أولاً.
+                    </p>
                   )}
 
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      dir="ltr"
-                      value={urlInput}
-                      onChange={(event) =>
-                        setUrlInput(event.target.value)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          addPendingUrl();
-                        }
-                      }}
-                      placeholder="https://example.com/image.jpg"
-                      className={`${inputClass} text-left text-xs`}
-                    />
-                    <button
-                      type="button"
-                      onClick={addPendingUrl}
-                      className="h-11 shrink-0 rounded-xl border border-black/[0.08] px-4 text-xs font-semibold text-[#77735f] transition hover:bg-[#f5f3ed]"
-                    >
-                      إضافة رابط
-                    </button>
-                  </div>
-                </div>
-
-                {/* ===== الخصائص ===== */}
-                <div className="space-y-4 rounded-xl border border-black/[0.07] p-4 sm:col-span-2">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-bold">
-                        خصائص المنتج
-                      </p>
-                      <p className="mt-1 text-[10px] text-gray-400">
-                        مثل: اللون (أحمر، أزرق) أو المقاس (S، M، L).
-                        تُستخدم هذه القيم لبناء المتغيرات.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={addAttribute}
-                      className="flex h-9 items-center gap-2 rounded-xl border border-black/[0.07] px-3 text-[11px] font-semibold text-[#77735f] transition hover:bg-[#f5f3ed]"
-                    >
-                      <Icon name="plus" size={15} />
-                      إضافة خاصية
-                    </button>
-                  </div>
-
                   {attributes.length === 0 ? (
-                    <p className="rounded-xl bg-[#faf9f6] px-4 py-5 text-center text-[11px] text-gray-400">
-                      لا توجد خصائص لهذا المنتج.
-                    </p>
+                    <p className="rounded-xl bg-[#faf9f6] px-4 py-5 text-center text-[11px] text-gray-400">لم تتم إضافة خصائص لهذا المنتج.</p>
                   ) : (
                     <div className="space-y-3">
                       {attributes.map((attribute) => (
-                        <div
-                          key={attribute.key}
-                          className="space-y-3 rounded-xl bg-[#faf9f6] p-3"
-                        >
-                          <div className="flex items-center gap-2">
-                            <input
-                              value={attribute.name}
-                              onChange={(event) =>
-                                updateAttributeName(
-                                  attribute.key,
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="اسم الخاصية، مثال: اللون"
-                              maxLength={150}
-                              className={`${inputClass} h-10 text-xs font-semibold`}
-                            />
-                            <button
-                              type="button"
-                              onClick={() =>
-                                removeAttributeDraft(attribute)
-                              }
-                              title="حذف الخاصية"
-                              className="rounded-lg p-2 text-[#b0786b] transition hover:bg-red-50"
-                            >
+                        <div key={attribute.key} className="space-y-3 rounded-xl bg-[#faf9f6] p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-bold text-[#252720]">{attribute.name}</p>
+                              <p className="mt-1 text-[10px] text-gray-400">النوع: {attribute.type}</p>
+                            </div>
+                            <button type="button" onClick={() => removeAttributeDraft(attribute)} title="إزالة الخاصية من المنتج" className="rounded-lg p-2 text-[#b0786b] transition hover:bg-red-50">
                               <Icon name="trash" size={16} />
                             </button>
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="space-y-2">
                             {attribute.values.map((value) => (
-                              <div
-                                key={value.key}
-                                className="flex items-center rounded-lg border border-black/[0.08] bg-white"
-                              >
-                                <input
-                                  value={value.value}
-                                  onChange={(event) =>
-                                    updateValue(
-                                      attribute.key,
-                                      value.key,
-                                      event.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter") {
-                                      event.preventDefault();
-                                      addValue(attribute.key);
-                                    }
-                                  }}
-                                  placeholder="قيمة"
-                                  maxLength={150}
-                                  className="h-9 w-28 rounded-lg bg-transparent px-2.5 text-xs outline-none"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    removeValueDraft(attribute, value)
-                                  }
-                                  title="حذف القيمة"
-                                  className="px-2 text-gray-400 hover:text-red-500"
-                                >
-                                  <Icon name="close" size={13} />
+                              <div key={value.key} className="grid grid-cols-1 gap-2 rounded-lg border border-black/[0.06] bg-white p-2 sm:grid-cols-[minmax(120px,1fr)_150px_auto] sm:items-center">
+                                <input value={value.value} onChange={(event) => updateValueField(attribute.key, value.key, "value", event.target.value)} placeholder="القيمة مثل أحمر أو XL" maxLength={150} className={`${inputClass} h-9 text-xs`} />
+                                {attribute.type === "color" ? (
+                                  <div className="flex h-9 items-center gap-2 rounded-lg border border-black/[0.08] px-2">
+                                    <input type="color" value={/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value.color_code) ? value.color_code : "#000000"} onChange={(event) => updateValueField(attribute.key, value.key, "color_code", event.target.value)} className="h-6 w-8 cursor-pointer border-0 bg-transparent p-0" aria-label="لون القيمة" />
+                                    <input value={value.color_code} onChange={(event) => updateValueField(attribute.key, value.key, "color_code", event.target.value)} placeholder="#000000" dir="ltr" className="min-w-0 w-full text-left text-[11px] outline-none" />
+                                  </div>
+                                ) : <div className="hidden sm:block" />}
+                                <button type="button" onClick={() => removeValueDraft(attribute, value)} title="حذف القيمة" className="flex h-9 items-center justify-center rounded-lg px-2 text-[#b0786b] hover:bg-red-50">
+                                  <Icon name="close" size={15} />
                                 </button>
                               </div>
                             ))}
-
-                            <button
-                              type="button"
-                              onClick={() => addValue(attribute.key)}
-                              className="flex h-9 items-center gap-1 rounded-lg border border-dashed border-[#85816d]/50 px-3 text-[11px] font-semibold text-[#77735f] transition hover:bg-white"
-                            >
-                              <Icon name="plus" size={13} />
-                              قيمة
+                            <button type="button" onClick={() => addValue(attribute.key)} className="flex h-9 items-center gap-1 rounded-lg border border-dashed border-[#85816d]/50 px-3 text-[11px] font-semibold text-[#77735f] transition hover:bg-white">
+                              <Icon name="plus" size={13} /> إضافة قيمة
                             </button>
                           </div>
                         </div>
@@ -2952,7 +3113,7 @@ export default function ProductsPage() {
                   )}
                 </div>
 
-                {/* ===== المتغيرات والمخزون ===== */}
+                {/* ===== 4) المتغيرات والمخزون (صورة من صور المنتج) ===== */}
                 <div className="space-y-4 rounded-xl border border-black/[0.07] p-4 sm:col-span-2">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -2961,8 +3122,8 @@ export default function ProductsPage() {
                       </p>
                       <p className="mt-1 text-[10px] leading-5 text-gray-400">
                         كل متغير هو تركيبة من الخصائص (مثل: أحمر / M) بمخزون
-                        وسعر اختياري خاص به. عند وجود متغيرات يصبح مخزون
-                        المنتج مجموع مخزونها.
+                        وسعر اختياري وصورة واحدة تختارها من صور المنتج.
+                        عند وجود متغيرات يصبح مخزون المنتج مجموع مخزونها.
                       </p>
                     </div>
 
@@ -3036,10 +3197,7 @@ export default function ProductsPage() {
                                 return (
                                   <Field
                                     key={attribute.key}
-                                    label={
-                                      attribute.name.trim() ||
-                                      "خاصية بدون اسم"
-                                    }
+                                    label={attribute.name}
                                   >
                                     <select
                                       value={
@@ -3070,6 +3228,21 @@ export default function ProductsPage() {
                               })}
                             </div>
                           )}
+
+                          <div>
+                            <span className="mb-2 block text-xs font-semibold text-[#55564e]">
+                              صورة المتغير (من صور المنتج)
+                            </span>
+                            <VariantImagePicker
+                              options={imageOptions}
+                              value={variant.image_ref}
+                              onChange={(ref) =>
+                                updateVariantDraft(variant.key, {
+                                  image_ref: ref,
+                                })
+                              }
+                            />
+                          </div>
 
                           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                             <Field label="المخزون">
