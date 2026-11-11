@@ -649,7 +649,6 @@ export async function getProductDetails(
         attribute_value_id: item.attribute_value_id,
         attribute_value: item.attribute_value,
         color_code: item.color_code,
-        image_url: item.image_url,
       })),
   }));
 
@@ -1735,7 +1734,6 @@ export async function getProductById(id: string) {
         value_id: attribute.attribute_value_id,
         value: attribute.attribute_value,
         color_code: attribute.color_code,
-        image_url: attribute.image_url,
       })),
   }));
 
@@ -1761,7 +1759,6 @@ export async function getProductById(id: string) {
         id: string;
         value: string;
         color_code: string | null;
-        image_url: string | null;
       }[];
     }
   >();
@@ -1790,7 +1787,6 @@ export async function getProductById(id: string) {
         id: option.attribute_value_id,
         value: option.attribute_value,
         color_code: option.color_code,
-        image_url: option.image_url,
       });
     }
   }

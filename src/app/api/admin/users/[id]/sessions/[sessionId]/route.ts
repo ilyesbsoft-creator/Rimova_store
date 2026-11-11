@@ -1,6 +1,8 @@
 import type { NextRequest } from "next/server";
 
-import { revokeAdminSessionController } from "@/backend/modules/admin-auth/adminAuth.controller";
+import {
+  revokeAdminSessionController,
+} from "@/backend/modules/admin-auth/adminAuth.controller";
 import { requireAdmin } from "@/backend/modules/admin-auth/adminAuth.middleware";
 import type { AdminRole } from "@/backend/modules/admin-auth/adminAuth.repository";
 

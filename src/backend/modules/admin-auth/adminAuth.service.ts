@@ -702,6 +702,19 @@ export async function listAdminAccounts(
   };
 }
 
+
+/**
+ * Get administrator by ID.
+ */
+export async function getAdminAccount(
+  adminUserId: string,
+): Promise<AdminPublicProfile> {
+  const admin = await ensureAdminExists(adminUserId);
+
+  return toPublicAdmin(admin);
+}
+
+
 /* -------------------------------------------------------------------------- */
 /*                         Administrator Update                               */
 /* -------------------------------------------------------------------------- */

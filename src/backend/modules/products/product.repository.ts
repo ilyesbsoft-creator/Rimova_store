@@ -584,33 +584,48 @@ export async function createProductImage(
 }
 
 /**
- * تعديل بيانات الصورة.
+ * تعديل بيانات الصورة مع التأكد من أنها تابعة للمنتج المحدد.
  */
 export async function updateProductImage(
   id: string,
+  productId: string,
   data: UpdateProductImageData,
   connection: DatabaseConnection = db
 ): Promise<ProductImageRow | null> {
   const affectedRows = await connection("product_images")
-    .where({ id })
+    .where({
+      id,
+      product_id: productId,
+    })
     .update(data);
 
   if (!affectedRows) {
     return null;
   }
 
-  return (await findProductImageById(id, connection)) ?? null;
+  return (
+    (await connection("product_images")
+      .where({
+        id,
+        product_id: productId,
+      })
+      .first()) ?? null
+  );
 }
 
 /**
- * حذف صورة.
+ * حذف صورة مع التأكد من أنها تابعة للمنتج المحدد.
  */
 export async function deleteProductImage(
   id: string,
+  productId: string,
   connection: DatabaseConnection = db
 ): Promise<boolean> {
   const affectedRows = await connection("product_images")
-    .where({ id })
+    .where({
+      id,
+      product_id: productId,
+    })
     .delete();
 
   return affectedRows > 0;

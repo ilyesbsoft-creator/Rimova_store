@@ -25,7 +25,6 @@ import {
   Save,
   Minus,
   Check,
-  ChevronLeft,
   AlertCircle,
   Boxes,
   RefreshCw,
@@ -38,7 +37,7 @@ import type { getProductById } from "@/backend/modules/products/product.service"
 
 type Product = NonNullable<Awaited<ReturnType<typeof getProductById>>>;
 
-type OrderStatus =
+export type OrderStatus =
   | "PENDING"
   | "CONFIRMED"
   | "PROCESSING"
@@ -61,7 +60,7 @@ type OrderItem = {
   line_total: number | string;
 };
 
-type Order = {
+export type Order = {
   id: string;
   order_number: string;
   customer_first_name: string;
@@ -461,10 +460,10 @@ function ProductVariantSelector({
           ...attribute,
           values: attribute.values.filter((value) =>
             product.variants.some((variant) =>
-              (variant.attribute_values ?? []).some(
+              (variant.attributes).some(
                 (variantAttribute) =>
-                  variantAttribute.attribute_id === attribute.id &&
-                  variantAttribute.attribute_value_id === value.id,
+                  variantAttribute.id === attribute.id &&
+                  variantAttribute.value_id === value.id,
               ),
             ),
           ),
@@ -485,7 +484,7 @@ function ProductVariantSelector({
     if (!allSelected) return undefined;
 
     return product.variants.find((variant) => {
-      const variantAttributes = variant.attribute_values ?? [];
+      const variantAttributes = variant.attributes;
 
       if (variantAttributes.length !== availableAttributes.length) {
         return false;
@@ -494,8 +493,8 @@ function ProductVariantSelector({
       return availableAttributes.every((attribute) =>
         variantAttributes.some(
           (variantAttribute) =>
-            variantAttribute.attribute_id === attribute.id &&
-            variantAttribute.attribute_value_id ===
+            variantAttribute.id === attribute.id &&
+            variantAttribute.value_id ===
               selectedAttributeValues[attribute.id],
         ),
       );
@@ -545,12 +544,12 @@ function ProductVariantSelector({
     return product.variants.some((variant) => {
       if (getEffectiveStock(variant) < 1) return false;
 
-      const variantAttributes = variant.attribute_values ?? [];
+      const variantAttributes = variant.attributes;
 
       const matchesCurrentAttribute = variantAttributes.some(
         (variantAttribute) =>
-          variantAttribute.attribute_id === attributeId &&
-          variantAttribute.attribute_value_id === valueId,
+          variantAttribute.id === attributeId &&
+          variantAttribute.value_id === valueId,
       );
 
       if (!matchesCurrentAttribute) return false;
@@ -564,8 +563,8 @@ function ProductVariantSelector({
 
         return variantAttributes.some(
           (variantAttribute) =>
-            variantAttribute.attribute_id === attribute.id &&
-            variantAttribute.attribute_value_id === selectedValueId,
+            variantAttribute.id === attribute.id &&
+            variantAttribute.value_id === selectedValueId,
         );
       });
     });
@@ -708,8 +707,8 @@ function handleAttributeChange(attributeId: string, valueId: string) {
       {selectedVariant.image_url ? (
         <Image
           src={selectedVariant.image_url}
-          alt={`${product.name} - ${(selectedVariant.attribute_values ?? [])
-            .map((attribute) => attribute.attribute_value)
+          alt={`${product.name} - ${(selectedVariant.attributes ?? [])
+            .map((attribute) => attribute.value)
             .join(" - ")}`}
           fill
           unoptimized
@@ -735,10 +734,10 @@ function handleAttributeChange(attributeId: string, valueId: string) {
           </p>
 
           <p className="mt-1 font-bold leading-7 text-[#252720]">
-            {(selectedVariant.attribute_values ?? [])
+            {(selectedVariant.attributes ?? [])
               .map(
                 (attribute) =>
-                  `${attribute.attribute_name}: ${attribute.attribute_value}`,
+                  `${attribute.name}: ${attribute.value}`,
               )
               .join(" · ")}
           </p>
@@ -894,7 +893,9 @@ function OrderItemEditor({
   const [productSearch, setProductSearch] = useState("");
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [productLoading, setProductLoading] = useState(false);
+  const [productLoading, setProductLoading] = useState(
+    mode === "edit" && Boolean(item?.product_id),
+  );
 
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(
     item?.product_variant_id ?? null,
@@ -970,32 +971,31 @@ const handleSelectionChange = useCallback(
         let currentStock: number | null = null;
 
         // استعادة خصائص المتغير الحالي عند تعديل العنصر نفسه.
-// استعادة خصائص المتغير الحالي عند تعديل العنصر نفسه.
-if (
-  item &&
-  item.product_id === productId &&
-  item.product_variant_id
-) {
-  const currentVariant = product.variants.find(
-    (variant) => variant.id === item.product_variant_id,
-  );
+        if (
+          item &&
+          item.product_id === productId &&
+          item.product_variant_id
+        ) {
+          const currentVariant = product.variants.find(
+            (variant) => variant.id === item.product_variant_id,
+          );
 
-  if (currentVariant) {
-    for (const variantAttribute of currentVariant.attribute_values ?? []) {
-      selectedValues[variantAttribute.attribute_id] =
-        variantAttribute.attribute_value_id;
-    }
+          if (currentVariant) {
+            for (const variantAttribute of currentVariant.attributes) {
+              selectedValues[variantAttribute.id] =
+                variantAttribute.value_id;
+            }
 
-    currentVariantId = currentVariant.id;
-    currentPrice = Number(
-      currentVariant.price ?? product.price,
-    );
-    currentStock = Math.max(
-      0,
-      Number(currentVariant.stock_quantity) || 0,
-    );
-  }
-}
+            currentVariantId = currentVariant.id;
+            currentPrice = Number(
+              currentVariant.price ?? product.price,
+            );
+            currentStock = Math.max(
+              0,
+              Number(currentVariant.stock_quantity) || 0,
+            );
+          }
+        }
 
         setInitialAttributeValues(selectedValues);
         setSelectedVariantId(currentVariantId);
@@ -1118,7 +1118,14 @@ if (
       onClose={saving ? () => {} : onClose}
     >
       <div className="space-y-6">
-        {!selectedProduct ? (
+        {productLoading ? (
+          <div className="flex flex-col items-center justify-center py-16">
+            <LoaderCircle className="h-8 w-8 animate-spin text-[#85816d]" />
+            <p className="mt-3 text-sm text-[#85816d]">
+              جارٍ تحميل تفاصيل المنتج...
+            </p>
+          </div>
+        ) : !selectedProduct ? (
           <section className="space-y-5">
             <div>
               <SectionHeading
@@ -1194,13 +1201,6 @@ if (
               </div>
             )}
           </section>
-        ) : productLoading ? (
-          <div className="flex flex-col items-center justify-center py-16">
-            <LoaderCircle className="h-8 w-8 animate-spin text-[#85816d]" />
-            <p className="mt-3 text-sm text-[#85816d]">
-              جارٍ تحميل تفاصيل المنتج...
-            </p>
-          </div>
         ) : (
           <div className="space-y-6">
             <section className="rounded-2xl border border-[#e9e6dd] bg-[#faf9f6] p-4 sm:p-5">

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import db from "../../database/knex";
 
 import type { UpdateOrderItemPayload } from "./order.validation";
+import type { CreateOrderPayload } from "./order.validation";
 
 import {
   notifyNewOrder,
@@ -48,26 +49,7 @@ import {
 
 type DeliveryMethod = "HOME" | "OFFICE";
 
-type CreateOrderInput = {
-  customer_first_name: string;
-  customer_last_name: string;
-  customer_phone: string;
-
-  wilaya_id: string;
-  commune_id: string;
-  delivery_company_id: string;
-
-  delivery_method: DeliveryMethod;
-  delivery_office_id?: string | null;
-  delivery_address?: string | null;
-  customer_note?: string | null;
-
-  items: {
-    product_id: string;
-    product_variant_id?: string | null;
-    quantity: number;
-  }[];
-};
+type CreateOrderInput = CreateOrderPayload;
 
 export class OrderServiceError extends Error {
   constructor(
@@ -129,8 +111,15 @@ export async function createOrder(input: CreateOrderInput) {
   }
 
   // عنوان المنزل والمكتب
-  const address = input.delivery_address?.trim() || null;
-  const officeId = input.delivery_office_id?.trim() || null;
+const address =
+  input.delivery_method === "HOME"
+    ? input.delivery_address?.trim() || null
+    : null;
+
+const officeId =
+  input.delivery_method === "OFFICE"
+    ? input.delivery_office_id
+    : null;
 
   // لا يُسمح بتمرير مكتب عند اختيار التوصيل إلى المنزل.
   if (
@@ -1183,7 +1172,6 @@ rate = await findActiveHomeDeliveryRate(
         const office = await findActiveDeliveryOffice(
           officeId,
           company.id,
-          commune.id,
           trx
         );
 

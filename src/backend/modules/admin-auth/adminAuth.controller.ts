@@ -18,6 +18,7 @@ import {
   logoutAdmin,
   changeAdminPassword,
   createAdminAccount,
+  getAdminAccount,
   listAdminAccounts,
   updateAdminAccount,
   deleteAdminAccount,
@@ -382,6 +383,36 @@ export async function changePassword(
   }
 }
 
+
+/* -------------------------------------------------------------------------- */
+/*                           Get Administrator                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * GET /api/admin/users/:id
+ */
+export async function getAdmin(
+  request: NextRequest,
+  id: string,
+): Promise<Response> {
+  try {
+    const idError = validateAdminId(id);
+
+    if (idError) {
+      return idError;
+    }
+
+    const admin = await getAdminAccount(id);
+
+    return successResponse({
+      admin,
+    });
+  } catch (error) {
+    return getErrorResponse(error);
+  }
+}
+
+
 /* -------------------------------------------------------------------------- */
 /*                            List Administrators                             */
 /* -------------------------------------------------------------------------- */
@@ -501,6 +532,12 @@ export async function updateAdmin(
     const body = await readJsonBody(request);
 
     const validation = updateAdminSchema.safeParse(body);
+	
+if (!validation.success) {
+  return validationErrorResponse(
+    validation.error.flatten().fieldErrors,
+  );
+}	
 
     const admin = await updateAdminAccount(
       id,
@@ -529,13 +566,21 @@ export async function deleteAdmin(
   id: string,
 ): Promise<Response> {
   try {
+    // Validate target administrator ID.
     const idError = validateAdminId(id);
 
     if (idError) {
       return idError;
     }
 
-    await deleteAdminAccount(id);
+    // Get the currently authenticated administrator.
+    const authenticated = await getAuthenticatedAdmin(request);
+
+    // Delete target administrator while passing the requester ID.
+    await deleteAdminAccount(
+      id,
+      authenticated.admin.id,
+    );
 
     return successResponse({
       message: "Administrator deleted successfully.",
@@ -544,6 +589,7 @@ export async function deleteAdmin(
     return getErrorResponse(error);
   }
 }
+
 
 /* -------------------------------------------------------------------------- */
 /*                         Update Administrator Status                        */

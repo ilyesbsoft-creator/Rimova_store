@@ -1,4 +1,4 @@
-import { getProductDetails } from "@/backend/modules/product/product.controller";
+import { getProductDetails } from "@/backend/modules/products/product.controller";
 
 /**
  * GET /api/products/:id

@@ -229,10 +229,6 @@ export const updateOrderItemSchema = z.object({
   quantity: z.coerce.number().int().min(1).max(100000),
 });
 
-export type UpdateOrderItemPayload = z.infer<
-  typeof updateOrderItemSchema
->;
-
 /* =========================================================
    ORDER STATISTICS
 ========================================================= */

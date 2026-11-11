@@ -1,9 +1,10 @@
+
 import type { NextRequest } from "next/server";
 
 import {
-  getAdmins,
   updateAdmin,
   deleteAdmin,
+  getAdmin,
 } from "@/backend/modules/admin-auth/adminAuth.controller";
 
 import { requireAdmin } from "@/backend/modules/admin-auth/adminAuth.middleware";
@@ -23,7 +24,8 @@ export async function GET(
   if (response) return response;
 
   const { id } = await context.params;
-  return getAdmins(request, id);
+
+  return getAdmin(request, id);
 }
 
 export async function PATCH(
@@ -34,6 +36,7 @@ export async function PATCH(
   if (response) return response;
 
   const { id } = await context.params;
+
   return updateAdmin(request, id);
 }
 
@@ -46,10 +49,12 @@ export async function DELETE(
 
   const { id } = await context.params;
 
-  // Prevent an administrator from deleting their own account.
   if (admin?.id === id) {
     return Response.json(
-      { success: false, message: "You cannot delete your own account." },
+      {
+        success: false,
+        message: "You cannot delete your own account.",
+      },
       { status: 400 },
     );
   }
