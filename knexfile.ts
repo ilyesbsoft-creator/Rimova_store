@@ -1,3 +1,4 @@
+
 import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
@@ -5,10 +6,26 @@ import type { Knex } from "knex";
 
 dotenv.config({ path: ".env.local" });
 
-const caPath = process.env.DB_SSL_CA;
+const caValue = process.env.DB_SSL_CA;
 
-if (!caPath || !fs.existsSync(path.resolve(caPath))) {
-  throw new Error("MySQL CA certificate was not found.");
+if (!caValue) {
+  throw new Error("DB_SSL_CA environment variable is missing.");
+}
+
+let caCertificate: string;
+
+if (caValue.includes("-----BEGIN CERTIFICATE-----")) {
+  // Production: Certificate content from Vercel Environment Variables
+  caCertificate = caValue.replace(/\\n/g, "\n");
+} else {
+  // Local: Certificate file path
+  const caPath = path.resolve(process.cwd(), caValue);
+
+  if (!fs.existsSync(caPath)) {
+    throw new Error(`MySQL CA certificate was not found: ${caPath}`);
+  }
+
+  caCertificate = fs.readFileSync(caPath, "utf8");
 }
 
 const config: Knex.Config = {
@@ -22,7 +39,8 @@ const config: Knex.Config = {
     password: process.env.DB_PASSWORD,
 
     ssl: {
-      ca: fs.readFileSync(path.resolve(caPath), "utf8"),
+      ca: caCertificate,
+      rejectUnauthorized: true,
     },
   },
 
